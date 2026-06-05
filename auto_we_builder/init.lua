@@ -408,7 +408,13 @@ function auto_we_builder.show_building_menu(player, npc_entity)
     minetest.log("action", "[Auto WE Builder] Checking schema path: " .. schema_path)
     
     -- Check if directory exists by trying to list it
-    local files = minetest.list_dir(schema_path)
+    local files
+    if minetest.list_dir then
+        files = minetest.list_dir(schema_path)
+    else
+        minetest.log("error", "[Auto WE Builder] minetest.list_dir does not exist!")
+        return
+    end
     
     if not files then
         minetest.log("error", "[Auto WE Builder] Could not access schema directory: " .. schema_path)
