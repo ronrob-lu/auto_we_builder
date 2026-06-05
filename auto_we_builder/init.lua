@@ -254,10 +254,13 @@ minetest.register_entity("auto_we_builder:npc_builder", {
         if not player or not player:is_player() then
             -- Find nearest player
             local pos = self.object:getpos()
-            local players = minetest.get_players_in_area(vector.offset(pos, -20, -10, -20), vector.offset(pos, 20, 10, 20))
-            if #players > 0 then
-                player = players[1]
-                self._player_follow = player
+            local objects = minetest.get_objects_in_area(vector.offset(pos, -20, -10, -20), vector.offset(pos, 20, 10, 20))
+            for _, obj in ipairs(objects) do
+                if obj:is_player() then
+                    player = obj
+                    self._player_follow = player
+                    break
+                end
             end
         end
         
