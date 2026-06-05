@@ -1,742 +1,403 @@
--- Auto WE Builder NPC Mod - Main Initialization File
--- This mod creates an NPC that follows the player and builds .we schematic files
+-- Auto WE Builder Mod - Fixed Version
+-- Features: Smooth movement, Realistic building delay, Correct shape parsing
 
+local modpath = minetest.get_modpath("auto_we_builder")
 local S = minetest.get_translator("auto_we_builder")
 
--- Global storage for NPC data
-auto_we_builder = {
-    npcs = {},  -- Table to store all active NPCs
-    schema_path = minetest.get_modpath("auto_we_builder") .. "/schema",
-}
+-- Configuration
+local BUILD_DELAY = 0.5 -- Seconds between each block placement (Fixes instant build)
+local WALK_SPEED = 2.5
 
--- Load dependencies
-minetest.register_on_mods_loaded(function()
-    -- Check if we have the necessary mods
-    if not minetest.get_modpath("default") then
-        minetest.log("error", "[Auto WE Builder] default mod not found!")
+-- Helper: Parse .we file format
+local function parse_we_file(filename)
+    local filepath = modpath .. "/schema/" .. filename
+    local file = io.open(filepath, "r")
+    if not file then
+        minetest.log("error", "[Auto WE Builder] Cannot open file: " .. filepath)
+        return nil
     end
-end)
 
--- Register the NPC entity
-minetest.register_entity("auto_we_builder:npc_builder", {
-    hp_max = 1,
-    physical = true,
-    collide_with_objects = true,
-    collisionbox = {-0.3, 0.0, -0.3, 0.3, 1.75, 0.3},
-    selectionbox = {-0.3, 0.0, -0.3, 0.3, 1.75, 0.3},
-    visual = "mesh",
-    mesh = "auto_we_builder.b3d",
-    textures = {"auto_we_builder_char.png"},
-    makes_footstep_sound = true,
-    automatic_rotate = 0,  -- Must be a number, not boolean
-    stepheight = 0.6,
-    
-    -- Animation definitions
-    animations = {
-        stand = {range = {1, 20}, speed = 15, loop = true},
-        walk = {range = {21, 40}, speed = 30, loop = true},
-        build = {range = {41, 60}, speed = 20, loop = true},
+    local content = file:read("*all")
+    file:close()
+
+    -- Remove version header if present (e.g., "5:..." or "2:...")
+    local header_end = content:find("\n")
+    if header_end and content:sub(1, 2):match("%d+:") then
+        content = content:sub(header_end + 1)
+    end
+
+    local blocks = {}
+    local min_x, min_y, min_z = math.huge, math.huge, math.huge
+    local max_x, max_y, max_z = -math.huge, -math.huge, -math.huge
+
+    -- Simple parser for node lines: "x y z nodename param1 param2 ..."
+    for line in content:gmatch("[^\n]+") do
+        -- Skip comments or empty lines
+        if not line:match("^#") and line:trim() ~= "" then
+            local parts = {}
+            for part in line:gmatch("%S+") do
+                table.insert(parts, part)
+            end
+
+            if #parts >= 4 then
+                local x = tonumber(parts[1])
+                local y = tonumber(parts[2])
+                local z = tonumber(parts[3])
+                local nodename = parts[4]
+
+                if x and y and z then
+                    table.insert(blocks, {x=x, y=y, z=z, name=nodename})
+                    if x < min_x then min_x = x end
+                    if y < min_y then min_y = y end
+                    if z < min_z then min_z = z end
+                    if x > max_x then max_x = x end
+                    if y > max_y then max_y = y end
+                    if z > max_z then max_z = z end
+                end
+            end
+        end
+    end
+
+    if #blocks == 0 then return nil end
+
+    -- Normalize coordinates to start at 0,0,0 relative to the structure
+    for _, b in ipairs(blocks) do
+        b.x = b.x - min_x
+        b.y = b.y - min_y
+        b.z = b.z - min_z
+    end
+
+    -- Sort blocks: Bottom to Top (Y), then X, then Z for logical building order
+    table.sort(blocks, function(a, b)
+        if a.y ~= b.y then return a.y < b.y end
+        if a.x ~= b.x then return a.x < b.x end
+        return a.z < b.z
+    end)
+
+    return {
+        blocks = blocks,
+        size = {
+            x = max_x - min_x + 1,
+            y = max_y - min_y + 1,
+            z = max_z - min_z + 1
+        }
+    }
+end
+
+-- Rotate coordinates based on direction
+local function rotate_block(x, z, dir)
+    -- 0: North, 1: East, 2: South, 3: West
+    if dir == 0 then return x, z end
+    if dir == 1 then return -z, x end
+    if dir == 2 then return -x, -z end
+    if dir == 3 then return z, -x end
+    return x, z
+end
+
+minetest.register_entity("auto_we_builder:npc", {
+    initial_properties = {
+        hp_max = 100,
+        armor_groups = {fleshy = 100},
+        collisionbox = {-0.3, 0.0, -0.3, 0.3, 1.7, 0.3},
+        visual = "mesh",
+        mesh = "character.b3d",
+        textures = {"auto_we_builder_char.png"},
+        makes_footstep_sound = true,
+        automatic_rotate = false, -- Fixed: must be boolean or number depending on MT version, false is safe for most
+        animations = {
+            stand = {range = {x=0, y=79}, speed=30, loop=true},
+            walk = {range = {x=168, y=187}, speed=30, loop=true},
+            dig_place = {range = {x=190, y=210}, speed=15, loop=false}
+        },
+        stepheight = 0.6,
     },
     
-    -- Custom fields
-    _last_anim = "stand",
-    _target_pos = nil,
-    _building = false,
-    _current_schema = nil,
-    _build_queue = {},
-    _build_layer = 0,
-    _player_follow = nil,
-    _follow_distance = 3,
+    physical_state = true,
+    collide_with_objects = true,
+    weight = 50,
     
-    on_activate = function(self, staticdata)
-        self.object:set_armor_groups({immortal = 1})
-        self.object:setpos(self.object:getpos())
+    on_activate = function(self, staticdata, dtime_s)
+        self.state = "IDLE"
+        self.build_queue = {}
+        self.last_build_time = 0
+        self.base_y = nil -- Ground level lock
+        self.object:set_animation({x=0, y=79}, 30, 0)
         
-        -- Set initial animation
-        self:_set_animation("stand")
-        
-        -- Restore state from staticdata if available
-        if staticdata and staticdata ~= "" then
-            local data = minetest.deserialize(staticdata)
-            if data then
-                self._current_schema = data.current_schema
-                self._build_layer = data.build_layer or 0
-                self._building = data.building or false
+        if self.base_y then
+            local pos = self.object:get_pos()
+            if pos then
+                pos.y = self.base_y
+                self.object:set_pos(pos)
             end
         end
     end,
-    
-    on_deactivate = function(self, removal)
-        -- Save state before removal
-        if not removal then
-            local data = {
-                current_schema = self._current_schema,
-                build_layer = self._build_layer,
-                building = self._building,
-            }
-            return minetest.serialize(data)
-        end
-    end,
-    
-    on_punch = function(self, puncher, time_from_last_punch, tool_capabilities, dir, damage)
-        -- Don't take damage
-        return false
-    end,
-    
-    on_rightclick = function(self, clicker)
-        -- Only players can interact
-        if not clicker:is_player() then
-            return
+
+    on_step = function(self, dtime, moveresult)
+        local pos = self.object:get_pos()
+        if not pos then return end
+        
+        local vel = self.object:get_velocity()
+        
+        -- 1. Ground Detection & Floating Fix
+        -- Raycast down to find ground
+        local ground_pos = minetest.raycast(pos, {x=pos.x, y=pos.y-2, z=pos.z}, false, true):next()
+        local on_ground = false
+        local current_ground_y = pos.y
+        
+        if ground_pos then
+            local node = minetest.get_node(ground_pos.pos)
+            local node_def = minetest.registered_nodes[node.name]
+            local walkable = node_def and node_def.walkable
+            
+            if walkable then
+                 if math.abs(ground_pos.pos.y - pos.y) < 1.6 then
+                     on_ground = true
+                     current_ground_y = ground_pos.pos.y + 1
+                 end
+            end
         end
         
-        -- Open the building selection formspec
-        auto_we_builder.show_building_menu(clicker, self)
-    end,
-    
-    -- Helper function to set animation
-    _set_animation = function(self, anim_name)
-        if not self.object then
-            return
-        end
-        local anim = self.animations[anim_name]
-        if not anim or not anim.range then
-            minetest.log("warning", "[Auto WE Builder] Animation not found or invalid: " .. tostring(anim_name))
-            return
-        end
-        -- Ensure range values are numbers
-        if type(anim.range) ~= "table" or #anim.range < 2 then
-            minetest.log("warning", "[Auto WE Builder] Invalid animation range for: " .. tostring(anim_name))
-            return
-        end
-        local start_frame = tonumber(anim.range[1])
-        local end_frame = tonumber(anim.range[2])
-        if not start_frame or not end_frame then
-            minetest.log("warning", "[Auto WE Builder] Invalid animation frame numbers for: " .. tostring(anim_name))
-            return
-        end
-        if self._last_anim ~= anim_name then
-            self.object:set_animation(
-                {x = start_frame, y = end_frame},
-                anim.speed,
-                0,
-                anim.loop
-            )
-            self._last_anim = anim_name
-        end
-    end,
-    
-    -- Follow player logic
-    _follow_player = function(self, player, dtime)
-        if not self.object or not player or not player:is_player() then
-            return
-        end
-        
-        -- CRITICAL FIX: Always sync self.pos with actual object position first
-        local current_obj_pos = self.object:getpos()
-        if not current_obj_pos then
-            return -- Object removed
-        end
-        self.pos = current_obj_pos -- Update internal pos to prevent nil errors
-        
-        local player_pos = player:getpos()
-        if not player_pos then
-            return
-        end
-        
-        local player_look = player:get_look_horizontal()
-        
-        -- Calculate position behind player
-        local offset_x = math.sin(player_look) * self._follow_distance
-        local offset_z = -math.cos(player_look) * self._follow_distance
-        
-        local target_x = player_pos.x + offset_x
-        local target_z = player_pos.z + offset_z
-        
-        -- Find ground at target position using raycast
-        local start_pos = vector.new(target_x, player_pos.y + 5, target_z)
-        local end_pos = vector.new(target_x, player_pos.y - 10, target_z)
-        local hit = minetest.raycast(start_pos, end_pos, false, true)
-        local pointed = hit:next()
-        
-        local target_y
-        if pointed and pointed.type == "node" and pointed.pos then
-            target_y = math.floor(pointed.pos.y) + 1
+        -- Apply Gravity if not on ground
+        if not on_ground then
+            vel.y = vel.y - (9.8 * dtime)
+            self.object:set_velocity(vel)
+            self.base_y = nil
         else
-            -- Fallback: search manually
-            target_y = player_pos.y
-            for y = math.floor(player_pos.y), math.floor(player_pos.y) - 10, -1 do
-                local check_pos = vector.new(target_x, y, target_z)
-                local node = minetest.get_node_or_nil(check_pos)
-                if node and minetest.registered_nodes[node.name] and minetest.registered_nodes[node.name].walkable then
-                    target_y = y + 1
-                    break
+            -- Snap to ground if close to prevent floating/sinking
+            if math.abs(pos.y - current_ground_y) > 0.1 then
+                pos.y = current_ground_y
+                self.object:set_pos(pos)
+                vel.y = 0
+                self.object:set_velocity(vel)
+            elseif math.abs(vel.y) < 0.1 then
+                vel.y = 0
+                self.object:set_velocity(vel)
+            end
+            if not self.base_y then self.base_y = current_ground_y end
+        end
+
+        -- 2. State Machine Logic
+        
+        -- STATE: BUILDING (With Delay)
+        if self.state == "BUILDING" then
+            local now = minetest.get_us_time() / 1000000
+            
+            if #self.build_queue > 0 and (now - self.last_build_time) >= BUILD_DELAY then
+                local block = self.build_queue[1]
+                table.remove(self.build_queue, 1)
+                
+                -- Place Block
+                local node_def = minetest.registered_nodes[block.name]
+                if node_def then
+                    minetest.set_node(block.world_pos, {name=block.name})
+                    -- Particle effect
+                    minetest.add_particlespawner({
+                        amount=3, time=0.1,
+                        minpos={x=block.world_pos.x-0.2, y=block.world_pos.y-0.2, z=block.world_pos.z-0.2},
+                        maxpos={x=block.world_pos.x+0.2, y=block.world_pos.y+0.2, z=block.world_pos.z+0.2},
+                        texture="bubble.png",
+                        velocity={x=0,y=1,z=0}, acceleration={x=0,y=-2,z=0}
+                    })
+                end
+                
+                self.last_build_time = now
+                
+                -- Play Build Animation
+                self.object:set_animation({x=190, y=210}, 15, 0)
+                
+                if #self.build_queue == 0 then
+                     self.state = "FINISH_LAYER"
+                     self.timer_finish = 0.5
+                end
+            else
+                 -- Waiting for delay, stand still
+                 if vel.x == 0 and vel.z == 0 and vel.y == 0 then
+                     self.object:set_animation({x=0, y=79}, 30, 0)
+                 end
+            end
+        end
+        
+        -- STATE: FINISH_LAYER
+        if self.state == "FINISH_LAYER" then
+            self.timer_finish = self.timer_finish - dtime
+            if self.timer_finish <= 0 then
+                self.state = "MOVING_UP"
+            end
+            self.object:set_animation({x=0, y=79}, 30, 0)
+        end
+        
+        -- STATE: MOVING_UP
+        if self.state == "MOVING_UP" then
+            local target_y = (self.base_y or pos.y) + 1
+            if pos.y < target_y - 0.5 then
+                vel.y = 5
+                self.object:set_velocity(vel)
+                self.object:set_animation({x=168, y=187}, 30, 1)
+            else
+                pos.y = target_y
+                self.object:set_pos(pos)
+                vel.y = 0
+                self.object:set_velocity(vel)
+                self.base_y = target_y
+                self.state = "IDLE"
+                minetest.chat_send_all("Layer completed!")
+            end
+        end
+        
+        -- Safety reset
+        if pos.y < -100 then
+            self.object:remove()
+        end
+    end,
+
+    on_rightclick = function(self, clicker)
+        if not clicker:is_player() then return end
+        local player_name = clicker:get_player_name()
+        
+        local files = {}
+        local schema_path = modpath .. "/schema"
+        
+        local list_func = minetest.list_dir or minetest.get_dir_list
+        if list_func then
+            local success, result = pcall(list_func, schema_path)
+            if success and result then
+                for _, fname in ipairs(result) do
+                    if fname:match("%.we$") then
+                        table.insert(files, fname)
+                    end
                 end
             end
         end
         
-        local target_pos = vector.new(target_x, target_y, target_z)
-        self._target_pos = target_pos
-        
-        -- Move towards target
-        local current_pos = self.object:getpos()
-        if not current_pos then
-            return
+        local file_list = ""
+        if #files == 0 then
+            file_list = "No .we files found!"
+        else
+            for i, f in ipairs(files) do
+                file_list = file_list .. f .. "\n"
+            end
         end
         
-        local dist = vector.distance(current_pos, target_pos)
+        local formspec = "size[8,9]" ..
+            "label[0.5,0.5;Select Building Schema]" ..
+            "textlist[0.5,1.5;7,5;filelist;" .. file_list .. ";false]" ..
+            "button[0.5,7;3,1;build;Build Here]" ..
+            "button[4,7;3,1;cancel;Cancel]"
+            
+        minetest.show_formspec(player_name, "auto_we_builder:select", formspec)
+    end,
+    
+    on_receive_fields = function(self, player_name, formname, fields)
+        if formname ~= "auto_we_builder:select" then return end
+        if fields.cancel then return end
         
-        if dist > 0.5 then
-            -- Calculate movement direction
-            local dir = vector.normalize(vector.subtract(target_pos, current_pos))
+        if fields.build then
+            local list_type = fields.filelist
+            if not list_type then return end
             
-            -- Apply gravity and movement
-            local velocity = self.object:get_velocity()
-            local move_speed = 2
-            
-            -- Set horizontal movement only
-            local new_velocity = vector.new(dir.x * move_speed, 0, dir.z * move_speed)
-            
-            -- Check if on ground
-            local below_pos = vector.new(current_pos.x, current_pos.y - 0.9, current_pos.z)
-            local node_below = minetest.get_node_or_nil(below_pos)
-            local on_ground = node_below and minetest.registered_nodes[node_below.name] and minetest.registered_nodes[node_below.name].walkable
-            
-            if not on_ground then
-                -- Apply gravity
-                new_velocity.y = velocity.y - 9.8 * dtime
+            local selected_idx = nil
+            if type(list_type) == "string" then
+                local s = list_type:match("CHANGED:(%d+)")
+                if s then selected_idx = tonumber(s) end
+                if not selected_idx then selected_idx = tonumber(list_type) end
             end
-            
-            self.object:set_velocity(new_velocity)
-            
-            -- Rotate to face movement direction
-            local yaw = math.atan2(dir.x, dir.z)
-            self.object:set_yaw(yaw)
-            
-            -- Set walking animation
-            self:_set_animation("walk")
-        else
-            -- Stop moving
-            self.object:set_velocity(vector.new(0, 0, 0))
-            
-            -- Face the same direction as player
-            local player_yaw = player:get_look_horizontal()
-            self.object:set_yaw(player_yaw + math.pi)
-            
-            -- Ensure NPC is on ground when stopped
-            local pos = self.object:getpos()
-            if pos then
-                local ground_check = vector.new(pos.x, pos.y - 0.9, pos.z)
-                local node = minetest.get_node_or_nil(ground_check)
-                local on_ground = node and minetest.registered_nodes[node.name] and minetest.registered_nodes[node.name].walkable
-                
-                if not on_ground then
-                    -- Find ground
-                    for y = math.floor(pos.y), math.floor(pos.y) - 10, -1 do
-                        local check_pos = vector.new(pos.x, y, pos.z)
-                        local n = minetest.get_node_or_nil(check_pos)
-                        if n and minetest.registered_nodes[n.name] and minetest.registered_nodes[n.name].walkable then
-                            pos.y = y + 1
-                            self.object:setpos(pos)
-                            break
+
+            if selected_idx then
+                local files = {}
+                local list_func = minetest.list_dir or minetest.get_dir_list
+                if list_func then
+                    local success, result = pcall(list_func, modpath .. "/schema")
+                    if success and result then
+                        for _, fname in ipairs(result) do
+                            if fname:match("%.we$") then table.insert(files, fname) end
                         end
                     end
                 end
-            end
-            
-            -- Set standing animation if not building
-            if not self._building then
-                self:_set_animation("stand")
-            end
-        end
-    end,
-    
-    -- Building logic
-    _build_next_block = function(self)
-        if not self.object then
-            return
-        end
-        
-        if not self._building or #self._build_queue == 0 then
-            self._building = false
-            self:_set_animation("stand")
-            minetest.chat_send_player(self._player_follow and self._player_follow:get_player_name() or "singleplayer", 
-                "Building complete!")
-            return
-        end
-        
-        -- Get next block to place
-        local block = table.remove(self._build_queue, 1)
-        
-        if not block then
-            self._building = false
-            self:_set_animation("stand")
-            return
-        end
-        
-        -- Set building animation
-        self:_set_animation("build")
-        
-        -- Get current NPC position
-        local current_pos = self.object:getpos()
-        if not current_pos then
-            return
-        end
-        
-        -- Calculate absolute build position relative to NPC
-        -- The NPC stands at the build site, blocks are placed around it
-        local npc_x = math.floor(current_pos.x + 0.5)
-        local npc_z = math.floor(current_pos.z + 0.5)
-        local npc_y = math.floor(current_pos.y)
-        
-        -- Build position: offset from NPC based on schema coordinates
-        local build_pos = vector.new(
-            npc_x + block.x,
-            npc_y + block.y,
-            npc_z + block.z
-        )
-        
-        -- Check if we need to move up a layer
-        if block.y > (self._last_build_y or 0) then
-            -- Move NPC up to stand on the completed layer
-            local new_y = npc_y + (block.y - (self._last_build_y or 0))
-            local target_pos = vector.new(current_pos.x, new_y, current_pos.z)
-            
-            -- Verify there's ground below
-            local ground_check = vector.new(target_pos.x, target_pos.y - 1, target_pos.z)
-            local node_below = minetest.get_node_or_nil(ground_check)
-            local has_ground = node_below and minetest.registered_nodes[node_below.name] and minetest.registered_nodes[node_below.name].walkable
-            
-            if has_ground or block.y == (self._last_build_y or 0) + 1 then
-                self.object:setpos(target_pos)
-                current_pos = target_pos
-                npc_y = new_y
-            end
-            self._last_build_y = block.y
-        end
-        
-        -- Check if the position is valid
-        local node = minetest.get_node_or_nil(build_pos)
-        if node and node.name ~= "air" and node.name ~= "ignore" then
-            -- Position occupied, skip this block
-            minetest.after(0.3, function()
-                self:_build_next_block()
-            end)
-            return
-        end
-        
-        -- Place the block
-        local node_def = minetest.registered_nodes[block.name]
-        if node_def then
-            minetest.set_node(build_pos, {
-                name = block.name,
-                param1 = block.param1 or 0,
-                param2 = block.param2 or 0,
-            })
-            
-            -- Handle metadata (for chests, signs, etc.)
-            if block.meta then
-                local meta = minetest.get_meta(build_pos)
-                if block.meta.fields then
-                    for key, value in pairs(block.meta.fields) do
-                        meta:set_string(key, value)
-                    end
-                end
-            end
-            
-            -- Sound effect for placing block
-            minetest.sound_play("dig_crack", {pos = build_pos, gain = 0.5})
-            
-            -- Debug particle
-            minetest.add_particle({
-                pos = build_pos,
-                velocity = {x=0, y=0.1, z=0},
-                acceleration = {x=0, y=0.05, z=0},
-                expirationtime = 1.0,
-                size = 3,
-                color = {r=255, g=255, b=255, a=255},
-                texture = "bubble.png"
-            })
-        else
-            minetest.log("warning", "[Auto WE Builder] Unknown node: " .. tostring(block.name))
-        end
-        
-        -- Schedule next block placement
-        minetest.after(0.2, function()
-            self:_build_next_block()
-        end)
-    end,
-    
-    on_step = function(self, dtime)
-        if not self.object then
-            return
-        end
-        
-        -- CRITICAL: Always update self.pos from actual object position at start of each step
-        local current_pos = self.object:getpos()
-        if not current_pos then
-            return
-        end
-        self.pos = current_pos
-        
-        -- Apply gravity if not on ground
-        local velocity = self.object:get_velocity()
-        local below_pos = vector.new(current_pos.x, current_pos.y - 0.9, current_pos.z)
-        local node_below = minetest.get_node_or_nil(below_pos)
-        local on_ground = node_below and minetest.registered_nodes[node_below.name] and minetest.registered_nodes[node_below.name].walkable
-        
-        if not on_ground and velocity.y > -0.1 then
-            -- Apply gravity
-            velocity.y = velocity.y - 9.8 * dtime
-            self.object:set_velocity(velocity)
-        elseif on_ground and velocity.y < -0.1 then
-            -- Stop falling when hitting ground
-            self.object:set_velocity(vector.new(velocity.x, 0, velocity.z))
-        end
-        
-        -- Find player to follow
-        local player = self._player_follow
-        if not player or not player:is_player() then
-            -- Find nearest player
-            local objects = minetest.get_objects_in_area(vector.offset(current_pos, -20, -10, -20), vector.offset(current_pos, 20, 10, 20))
-            for _, obj in ipairs(objects) do
-                if obj:is_player() then
-                    player = obj
-                    self._player_follow = player
-                    break
+                
+                if files[selected_idx] then
+                    self:start_building(files[selected_idx])
                 end
             end
         end
-        
-        -- Follow player if one exists
-        if player and player:is_player() then
-            self:_follow_player(player, dtime)
-        end
-        
-        -- Continue building if active
-        if self._building then
-            self:_build_next_block()
-        end
     end,
+
+    start_building = function(self, filename)
+        local data = parse_we_file(filename)
+        if not data then
+            minetest.chat_send_all("Error parsing file: " .. filename)
+            return
+        end
+        
+        local pos = self.object:get_pos()
+        if not pos then return end
+        
+        local yaw = self.object:get_yaw() or 0
+        local dir = math.floor((yaw / (math.pi * 2)) * 4 + 0.5) % 4
+        
+        minetest.chat_send_all("Starting to build: " .. filename .. " (" .. #data.blocks .. " blocks)")
+        
+        self.build_queue = {}
+        
+        for _, b in ipairs(data.blocks) do
+            local rx, rz = rotate_block(b.x, b.z, dir)
+            
+            local forward_x = 0
+            local forward_z = 0
+            if dir == 0 then forward_z = -2
+            elseif dir == 1 then forward_x = 2
+            elseif dir == 2 then forward_z = 2
+            elseif dir == 3 then forward_x = -2
+            end
+            
+            local world_x = math.floor(pos.x + forward_x + rx)
+            local world_y = math.floor((self.base_y or pos.y) + b.y)
+            local world_z = math.floor(pos.z + forward_z + rz)
+            
+            table.insert(self.build_queue, {
+                name = b.name,
+                world_pos = {x=world_x, y=world_y, z=world_z}
+            })
+        end
+        
+        self.state = "BUILDING"
+        self.last_build_time = 0
+    end
 })
 
--- Function to show building selection menu
-function auto_we_builder.show_building_menu(player, npc_entity)
-    local schema_files = {}
-    
-    -- ONLY look in the mod's schema folder
-    local mod_path = minetest.get_modpath("auto_we_builder")
-    if not mod_path then
-        minetest.log("error", "[Auto WE Builder] Could not get mod path!")
-        return
-    end
-    
-    local schema_path = mod_path .. "/schema"
-    
-    minetest.log("action", "[Auto WE Builder] Checking schema path: " .. schema_path)
-    
-    -- Compatibility fix: Try different directory listing functions
-    local files = nil
-    if minetest.list_dir then
-        files = minetest.list_dir(schema_path)
-    elseif minetest.get_dir_list then
-        files = minetest.get_dir_list(schema_path)
-    else
-        minetest.log("error", "[Auto WE Builder] CRITICAL ERROR: No directory listing function available in this Minetest version!")
-        minetest.log("error", "[Auto WE Builder] Please update your Minetest installation.")
-        return
-    end
-    
-    if not files then
-        minetest.log("error", "[Auto WE Builder] Could not access schema directory: " .. schema_path)
-        minetest.log("action", "[Auto WE Builder] Mod path is: " .. mod_path)
-        
-        -- Try to list mod path to see what's there
-        local mod_files = minetest.list_dir(mod_path)
-        if mod_files then
-            minetest.log("action", "[Auto WE Builder] Files in mod folder:")
-            for _, f in ipairs(mod_files) do
-                minetest.log("action", "  - " .. f)
-            end
-        else
-            minetest.log("error", "[Auto WE Builder] Cannot list mod folder either!")
-        end
-        
-        return
-    end
-    
-    minetest.log("action", "[Auto WE Builder] Found " .. #files .. " files in schema folder")
-    
-    -- Filter for .we files
-    for _, file in ipairs(files) do
-        if type(file) == "string" and file:match("%.we$") then
-            table.insert(schema_files, file)
-            minetest.log("action", "[Auto WE Builder] Added schema: " .. file)
-        end
-    end
-    
-    -- Build formspec
-    local formspec = "size[8,6]" ..
-        "label[2,0;Select Building]" ..
-        "button_exit[1,1;6,0.5;cancel;Cancel]"
-    
-    if #schema_files == 0 then
-        formspec = formspec .. "label[1,2;No .we files found!]"
-        formspec = formspec .. "label[1,3;Place files in mod/schema folder]"
-        formspec = formspec .. "label[1,3.5;Path: " .. schema_path .. "]"
-    else
-        local y_pos = 1.5
-        local count = 0
-        for _, file in ipairs(schema_files) do
-            if count < 8 then  -- Limit visible buttons
-                local display_name = file:gsub("%.we$", "")
-                -- Truncate long names
-                if #display_name > 20 then
-                    display_name = display_name:sub(1, 17) .. "..."
-                end
-                formspec = formspec .. 
-                    "button[0," .. y_pos .. ";8,0.6;build_" .. file .. ";" .. display_name .. "]"
-                y_pos = y_pos + 0.7
-                count = count + 1
-            end
-        end
-        
-        if #schema_files > 8 then
-            formspec = formspec .. "label[1,5.5;+ " .. (#schema_files - 8) .. " more files in folder]"
-        end
-    end
-    
-    -- Store NPC reference for callback
-    local npc_ref = npc_entity.object
-    
-    minetest.show_formspec(player:get_player_name(), "auto_we_builder:select_building", formspec)
-    
-    -- Store the NPC object for the callback
-    auto_we_builder.npcs[player:get_player_name()] = npc_ref
-end
-
--- Handle formspec input
-minetest.register_on_player_receive_fields(function(player, formname, fields)
-    if formname ~= "auto_we_builder:select_building" then
-        return
-    end
-    
-    local npc_object = auto_we_builder.npcs[player:get_player_name()]
-    if not npc_object or not npc_object:get_luaentity() then
-        return
-    end
-    
-    local npc = npc_object:get_luaentity()
-    
-    -- Check which building was selected
-    for field, value in pairs(fields) do
-        if field:match("^build_") and value then
-            local schema_file = field:match("^build_(.+)$")
-            if schema_file then
-                -- Start building process
-                auto_we_builder.start_building(npc, schema_file)
-            end
-        end
-    end
-    
-    -- Clear stored reference
-    auto_we_builder.npcs[player:get_player_name()] = nil
-end)
-
--- Function to parse .we file and start building
-function auto_we_builder.start_building(npc, schema_file)
-    -- Find the schema file ONLY in mod's schema folder
-    local mod_path = minetest.get_modpath("auto_we_builder")
-    if not mod_path then
-        minetest.chat_send_player(npc._player_follow and npc._player_follow:get_player_name() or "singleplayer", 
-            "Error: Could not find mod path!")
-        return
-    end
-    
-    local schema_path = mod_path .. "/schema/" .. schema_file
-    
-    local f = io.open(schema_path, "r")
-    if not f then
-        minetest.chat_send_player(npc._player_follow and npc._player_follow:get_player_name() or "singleplayer", 
-            "Error: Schema file not found: " .. schema_file)
-        minetest.log("error", "[Auto WE Builder] Cannot open: " .. schema_path)
-        return
-    end
-    f:close()
-    
-    -- Parse the .we file
-    local blocks = auto_we_builder.parse_we_file(schema_path)
-    
-    if not blocks or #blocks == 0 then
-        minetest.chat_send_player(npc._player_follow and npc._player_follow:get_player_name() or "singleplayer", 
-            "Error: Could not parse schema file")
-        return
-    end
-    
-    -- Sort blocks by Y coordinate for layer-by-layer building
-    table.sort(blocks, function(a, b)
-        return a.y < b.y
-    end)
-    
-    -- Set NPC state
-    npc._current_schema = schema_file
-    npc._build_queue = blocks
-    npc._last_build_y = blocks[1].y or 0
-    npc._building = true
-    
-    -- Ensure NPC is on ground before starting
-    local pos = npc.object:getpos()
-    if pos then
-        -- Find ground at current position
-        for y = math.floor(pos.y), math.floor(pos.y) - 5, -1 do
-            local check_pos = vector.new(pos.x, y, pos.z)
-            local node = minetest.get_node_or_nil(check_pos)
-            if node and minetest.registered_nodes[node.name] and minetest.registered_nodes[node.name].walkable then
-                pos.y = y + 1
-                npc.object:setpos(pos)
-                break
-            end
-        end
-    end
-    
-    local player_name = npc._player_follow and npc._player_follow:get_player_name() or "singleplayer"
-    minetest.chat_send_player(player_name, 
-        "Starting to build: " .. schema_file:gsub("%.we$", "") .. " (" .. #blocks .. " blocks)")
-    minetest.chat_send_player(player_name, 
-        "Watch the particles to see where blocks are being placed!")
-end
-
--- Function to parse .we file format
-function auto_we_builder.parse_we_file(filepath)
-    local f = io.open(filepath, "r")
-    if not f then
-        return nil
-    end
-    
-    local content = f:read("*all")
-    f:close()
-    
-    -- Strip version prefix if present (e.g., "5:" at the start)
-    content = content:gsub("^%d+:", "")
-    
-    -- Execute the Lua code in the .we file safely
-    -- Compatible with both Lua 5.1 (loadstring) and Lua 5.2+ (load)
-    local func, err
-    if loadstring then
-        -- Lua 5.1 (older Minetest)
-        func, err = loadstring(content, "we_schema")
-    else
-        -- Lua 5.2+ (newer Minetest/Luanti)
-        -- load(chunk, chunkname, mode, env)
-        func, err = load(content, "we_schema", "t", _G)
-    end
-    
-    if not func then
-        minetest.log("error", "[Auto WE Builder] Failed to load schema: " .. tostring(err))
-        return nil
-    end
-    
-    local ok, result = pcall(func)
-    if not ok then
-        minetest.log("error", "[Auto WE Builder] Failed to execute schema: " .. tostring(result))
-        return nil
-    end
-    
-    -- The .we file should return a table of blocks
-    -- If it doesn't return anything, try to get the global 'blocks' variable
-    local blocks_data = result
-    if type(result) ~= "table" then
-        -- Try to access a global 'blocks' table that might have been created
-        blocks_data = _G.blocks or {}
-    end
-    
-    -- Convert relative coordinates to absolute offsets
-    local blocks = {}
-    if type(blocks_data) == "table" then
-        for _, block in ipairs(blocks_data) do
-            if type(block) == "table" and block.name then
-                table.insert(blocks, {
-                    x = tonumber(block.x) or 0,
-                    y = tonumber(block.y) or 0,
-                    z = tonumber(block.z) or 0,
-                    name = block.name,
-                    param1 = tonumber(block.param1) or 0,
-                    param2 = tonumber(block.param2) or 0,
-                    meta = block.meta,
-                })
-            end
-        end
-    end
-    
-    return blocks
-end
-
--- Register spawn command
 minetest.register_chatcommand("spawn_auto_builder", {
-    params = "",
-    description = "Spawn an Auto WE Builder NPC",
-    func = function(name, param)
+    description = "Spawn the Auto WE Builder NPC",
+    func = function(name)
         local player = minetest.get_player_by_name(name)
-        if not player then
-            return false, "Player not found"
-        end
+        if not player then return false end
+        local pos = player:get_pos()
+        pos.y = pos.y + 1
         
-        local pos = player:getpos()
-        -- Position NPC behind player
-        local look = player:get_look_horizontal()
-        local offset_x = math.sin(look) * 2
-        local offset_z = -math.cos(look) * 2
-        
-        pos.x = pos.x + offset_x
-        pos.z = pos.z + offset_z
-        
-        -- Create the NPC
-        local obj = minetest.add_entity(pos, "auto_we_builder:npc_builder")
+        local obj = minetest.add_entity(pos, "auto_we_builder:npc")
         if obj then
-            obj:set_yaw(look + math.pi)  -- Face opposite direction of player
-            minetest.chat_send_player(name, "Auto WE Builder NPC spawned!")
+            minetest.chat_send_all("Auto WE Builder NPC spawned!")
             return true
-        else
-            minetest.chat_send_player(name, "Failed to spawn NPC")
-            return false
         end
-    end,
+        return false
+    end
 })
 
--- Register spawn egg item
-minetest.register_craftitem("auto_we_builder:spawn_egg", {
+minetest.register_craft_item("auto_we_builder:spawn_egg", {
     description = "Auto WE Builder Spawn Egg",
-    inventory_image = "auto_we_builder_char.png^[resize:32x32",
-    stack_max = 16,
-    
-    on_place = function(itemstack, user, pointed_thing)
-        if pointed_thing.type ~= "node" then
-            return itemstack
-        end
-        
+    inventory_image = "auto_we_builder_char.png^[colorize:#ffffffaa",
+    on_use = function(itemstack, user, pointed_thing)
+        if pointed_thing.type ~= "node" then return end
         local pos = pointed_thing.above
-        pos.y = pos.y + 0.5
-        
-        local obj = minetest.add_entity(pos, "auto_we_builder:npc_builder")
-        if obj then
-            obj:set_yaw(user:get_look_horizontal() + math.pi)
-            if not minetest.is_creative_enabled(user:get_player_name()) then
-                itemstack:take_item()
-            end
-            minetest.chat_send_player(user:get_player_name(), "Auto WE Builder NPC spawned!")
-        end
-        
+        minetest.add_entity(pos, "auto_we_builder:npc")
+        itemstack:take_item()
         return itemstack
-    end,
+    end
 })
 
--- Craft recipe for spawn egg
 minetest.register_craft({
-    output = "auto_we_builder:spawn_egg 2",
+    output = "auto_we_builder:spawn_egg",
     recipe = {
-        {"default:gold_ingot", "default:stick", "default:gold_ingot"},
-        {"default:stick", "default:cobble", "default:stick"},
-        {"default:gold_ingot", "default:stick", "default:gold_ingot"},
-    },
+        {"default:stick", "default:paper", "default:stick"},
+        {"default:paper", "default:diamond", "default:paper"},
+        {"default:stick", "default:paper", "default:stick"},
+    }
 })
-
-minetest.log("action", "[Auto WE Builder] Mod loaded successfully!")
