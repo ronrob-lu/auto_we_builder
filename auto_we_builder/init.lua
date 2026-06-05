@@ -126,7 +126,7 @@ minetest.register_entity("auto_we_builder:npc_builder", {
     end,
     
     -- Follow player logic
-    _follow_player = function(self, player)
+    _follow_player = function(self, player, dtime)
         if not self.object or not player or not player:is_player() then
             return
         end
@@ -142,40 +142,32 @@ minetest.register_entity("auto_we_builder:npc_builder", {
         local offset_x = math.sin(player_look) * self._follow_distance
         local offset_z = -math.cos(player_look) * self._follow_distance
         
-        local target_pos = vector.new(
-            player_pos.x + offset_x,
-            player_pos.y,
-            player_pos.z + offset_z
-        )
+        local target_x = player_pos.x + offset_x
+        local target_z = player_pos.z + offset_z
         
-        -- Adjust Y to match ground level - find the actual ground
-        local ground_y = target_pos.y
-        local found_ground = false
-        for y = math.floor(target_pos.y), math.floor(target_pos.y) - 10, -1 do
-            local check_pos = vector.new(target_pos.x, y, target_pos.z)
-            local node = minetest.get_node_or_nil(check_pos)
-            if node and minetest.registered_nodes[node.name] and minetest.registered_nodes[node.name].walkable then
-                ground_y = y + 1
-                found_ground = true
-                break
+        -- Find ground at target position using raycast
+        local start_pos = vector.new(target_x, player_pos.y + 5, target_z)
+        local end_pos = vector.new(target_x, player_pos.y - 10, target_z)
+        local hit = minetest.raycast(start_pos, end_pos, false, true)
+        local pointed = hit:next()
+        
+        local target_y
+        if pointed and pointed.type == "node" then
+            target_y = math.floor(pointed.pos.y) + 1
+        else
+            -- Fallback: search manually
+            target_y = player_pos.y
+            for y = math.floor(player_pos.y), math.floor(player_pos.y) - 10, -1 do
+                local check_pos = vector.new(target_x, y, target_z)
+                local node = minetest.get_node_or_nil(check_pos)
+                if node and minetest.registered_nodes[node.name] and minetest.registered_nodes[node.name].walkable then
+                    target_y = y + 1
+                    break
+                end
             end
         end
         
-        -- If no ground found, use the original Y but ensure it's not floating too high
-        if not found_ground then
-            -- Raycast down to find ground
-            local start_pos = vector.new(target_pos.x, target_pos.y + 5, target_pos.z)
-            local hit = minetest.raycast(start_pos, vector.new(target_pos.x, target_pos.y - 10, target_pos.z), false, true)
-            local pointed = hit:next()
-            if pointed and pointed.type == "node" then
-                ground_y = math.floor(pointed.pos.y) + 1
-            else
-                ground_y = target_pos.y
-            end
-        end
-        
-        target_pos.y = ground_y
-        
+        local target_pos = vector.new(target_x, target_y, target_z)
         self._target_pos = target_pos
         
         -- Move towards target
@@ -184,7 +176,7 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             return
         end
         
-        local dist = vector.distance(vector.new(current_pos.x, current_pos.y, current_pos.z), vector.new(target_pos.x, target_pos.y, target_pos.z))
+        local dist = vector.distance(current_pos, target_pos)
         
         if dist > 0.5 then
             -- Calculate movement direction
@@ -194,14 +186,17 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             local velocity = self.object:get_velocity()
             local move_speed = 2
             
-            -- Only apply horizontal movement, let gravity handle vertical
-            local new_velocity = vector.new(dir.x * move_speed, velocity.y, dir.z * move_speed)
+            -- Set horizontal movement only
+            local new_velocity = vector.new(dir.x * move_speed, 0, dir.z * move_speed)
             
-            -- If on ground, reset vertical velocity to prevent floating
-            local below_pos = vector.new(current_pos.x, current_pos.y - 0.5, current_pos.z)
+            -- Check if on ground
+            local below_pos = vector.new(current_pos.x, current_pos.y - 0.9, current_pos.z)
             local node_below = minetest.get_node_or_nil(below_pos)
-            if node_below and minetest.registered_nodes[node_below.name] and minetest.registered_nodes[node_below.name].walkable then
-                new_velocity.y = 0
+            local on_ground = node_below and minetest.registered_nodes[node_below.name] and minetest.registered_nodes[node_below.name].walkable
+            
+            if not on_ground then
+                -- Apply gravity
+                new_velocity.y = velocity.y - 9.8 * dtime
             end
             
             self.object:set_velocity(new_velocity)
@@ -223,10 +218,12 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             -- Ensure NPC is on ground when stopped
             local pos = self.object:getpos()
             if pos then
-                local ground_check = vector.new(pos.x, pos.y - 0.5, pos.z)
+                local ground_check = vector.new(pos.x, pos.y - 0.9, pos.z)
                 local node = minetest.get_node_or_nil(ground_check)
-                if not (node and minetest.registered_nodes[node.name] and minetest.registered_nodes[node.name].walkable) then
-                    -- Not on ground, find ground
+                local on_ground = node and minetest.registered_nodes[node.name] and minetest.registered_nodes[node.name].walkable
+                
+                if not on_ground then
+                    -- Find ground
                     for y = math.floor(pos.y), math.floor(pos.y) - 10, -1 do
                         local check_pos = vector.new(pos.x, y, pos.z)
                         local n = minetest.get_node_or_nil(check_pos)
@@ -359,7 +356,7 @@ minetest.register_entity("auto_we_builder:npc_builder", {
         
         -- Follow player if one exists
         if player and player:is_player() then
-            self:_follow_player(player)
+            self:_follow_player(player, dtime)
         end
         
         -- Continue building if active
@@ -377,6 +374,8 @@ function auto_we_builder.show_building_menu(player, npc_entity)
     local search_paths = {
         auto_we_builder.schema_path,
         minetest.get_modpath("auto_we_builder") .. "/schema",
+        minetest.get_worldpath() .. "/schematics",
+        minetest.get_worldpath() .. "/schema",
     }
     
     -- Add schematics mod path if it exists
@@ -386,25 +385,24 @@ function auto_we_builder.show_building_menu(player, npc_entity)
     
     for _, path in ipairs(search_paths) do
         if path then
-            -- Check if directory exists by trying to list it
-            local success, files = pcall(minetest.list_dir, path)
-            if success and files and type(files) == "table" then
+            -- Try to list directory contents
+            local files = minetest.list_dir(path)
+            if files and type(files) == "table" then
                 for _, file in ipairs(files) do
-                    if file:match("%.we$") then
-                        table.insert(schema_files, file)
+                    if type(file) == "string" and file:match("%.we$") then
+                        -- Avoid duplicates
+                        local already_added = false
+                        for _, existing in ipairs(schema_files) do
+                            if existing == file then
+                                already_added = true
+                                break
+                            end
+                        end
+                        if not already_added then
+                            table.insert(schema_files, file)
+                        end
                     end
                 end
-            end
-        end
-    end
-    
-    -- Also check world's schema folder if it exists
-    local world_schema = minetest.get_worldpath() .. "/schema"
-    local success, files = pcall(minetest.list_dir, world_schema)
-    if success and files and type(files) == "table" then
-        for _, file in ipairs(files) do
-            if file:match("%.we$") then
-                table.insert(schema_files, file)
             end
         end
     end
@@ -416,13 +414,25 @@ function auto_we_builder.show_building_menu(player, npc_entity)
     
     if #schema_files == 0 then
         formspec = formspec .. "label[1,2;No .we files found!]"
-        formspec = formspec .. "label[1,3;Place files in mod/schema folder]"
+        formspec = formspec .. "label[1,3;Place files in world/schematics or mod/schema folder]"
+        -- List available paths for debugging
+        local y_debug = 4
+        for _, path in ipairs(search_paths) do
+            if path then
+                formspec = formspec .. "label[1," .. y_debug .. ";" .. path .. "]"
+                y_debug = y_debug + 0.4
+            end
+        end
     else
         local y_pos = 1.5
         local count = 0
         for _, file in ipairs(schema_files) do
             if count < 8 then  -- Limit visible buttons
                 local display_name = file:gsub("%.we$", "")
+                -- Truncate long names
+                if #display_name > 20 then
+                    display_name = display_name:sub(1, 17) .. "..."
+                end
                 formspec = formspec .. 
                     "button[0," .. y_pos .. ";8,0.6;build_" .. file .. ";" .. display_name .. "]"
                 y_pos = y_pos + 0.7
@@ -431,7 +441,7 @@ function auto_we_builder.show_building_menu(player, npc_entity)
         end
         
         if #schema_files > 8 then
-            formspec = formspec .. "label[1,5.5;+ more files in folder]"
+            formspec = formspec .. "label[1,5.5;+ " .. (#schema_files - 8) .. " more files in folder]"
         end
     end
     
