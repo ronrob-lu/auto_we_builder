@@ -28,7 +28,7 @@ minetest.register_entity("auto_we_builder:npc_builder", {
     mesh = "auto_we_builder.b3d",
     textures = {"auto_we_builder_char.png"},
     makes_footstep_sound = true,
-    automatic_rotate = false,
+    automatic_rotate = 0,  -- Must be a number, not boolean
     stepheight = 0.6,
     
     -- Animation definitions
@@ -575,12 +575,15 @@ function auto_we_builder.parse_we_file(filepath)
     local content = f:read("*all")
     f:close()
     
+    -- Strip version prefix if present (e.g., "5:" at the start)
+    content = content:gsub("^%d+:", "")
+    
     -- Execute the Lua code in the .we file safely
     -- Compatible with both Lua 5.1 (loadstring) and Lua 5.2+ (load)
     local func, err
     if loadstring then
         -- Lua 5.1 (older Minetest)
-        func, err = loadstring(content)
+        func, err = loadstring(content, "we_schema")
     else
         -- Lua 5.2+ (newer Minetest/Luanti)
         -- load(chunk, chunkname, mode, env)
@@ -598,19 +601,29 @@ function auto_we_builder.parse_we_file(filepath)
         return nil
     end
     
+    -- The .we file should return a table of blocks
+    -- If it doesn't return anything, try to get the global 'blocks' variable
+    local blocks_data = result
+    if type(result) ~= "table" then
+        -- Try to access a global 'blocks' table that might have been created
+        blocks_data = _G.blocks or {}
+    end
+    
     -- Convert relative coordinates to absolute offsets
     local blocks = {}
-    if type(result) == "table" then
-        for _, block in ipairs(result) do
-            table.insert(blocks, {
-                x = block.x or 0,
-                y = block.y or 0,
-                z = block.z or 0,
-                name = block.name,
-                param1 = block.param1,
-                param2 = block.param2,
-                meta = block.meta,
-            })
+    if type(blocks_data) == "table" then
+        for _, block in ipairs(blocks_data) do
+            if type(block) == "table" and block.name then
+                table.insert(blocks, {
+                    x = tonumber(block.x) or 0,
+                    y = tonumber(block.y) or 0,
+                    z = tonumber(block.z) or 0,
+                    name = block.name,
+                    param1 = tonumber(block.param1) or 0,
+                    param2 = tonumber(block.param2) or 0,
+                    meta = block.meta,
+                })
+            end
         end
     end
     
