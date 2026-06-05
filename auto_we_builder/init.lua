@@ -344,19 +344,38 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             return
         end
         
+        -- CRITICAL: Always update self.pos from actual object position at start of each step
+        local current_pos = self.object:getpos()
+        if not current_pos then
+            return
+        end
+        self.pos = current_pos
+        
+        -- Apply gravity if not on ground
+        local velocity = self.object:get_velocity()
+        local below_pos = vector.new(current_pos.x, current_pos.y - 0.9, current_pos.z)
+        local node_below = minetest.get_node_or_nil(below_pos)
+        local on_ground = node_below and minetest.registered_nodes[node_below.name] and minetest.registered_nodes[node_below.name].walkable
+        
+        if not on_ground and velocity.y > -0.1 then
+            -- Apply gravity
+            velocity.y = velocity.y - 9.8 * dtime
+            self.object:set_velocity(velocity)
+        elseif on_ground and velocity.y < -0.1 then
+            -- Stop falling when hitting ground
+            self.object:set_velocity(vector.new(velocity.x, 0, velocity.z))
+        end
+        
         -- Find player to follow
         local player = self._player_follow
         if not player or not player:is_player() then
             -- Find nearest player
-            local pos = self.object:getpos()
-            if pos then
-                local objects = minetest.get_objects_in_area(vector.offset(pos, -20, -10, -20), vector.offset(pos, 20, 10, 20))
-                for _, obj in ipairs(objects) do
-                    if obj:is_player() then
-                        player = obj
-                        self._player_follow = player
-                        break
-                    end
+            local objects = minetest.get_objects_in_area(vector.offset(current_pos, -20, -10, -20), vector.offset(current_pos, 20, 10, 20))
+            for _, obj in ipairs(objects) do
+                if obj:is_player() then
+                    player = obj
+                    self._player_follow = player
+                    break
                 end
             end
         end
@@ -377,43 +396,45 @@ minetest.register_entity("auto_we_builder:npc_builder", {
 function auto_we_builder.show_building_menu(player, npc_entity)
     local schema_files = {}
     
-    -- Look for .we files in multiple locations
-    local search_paths = {
-        minetest.get_modpath("auto_we_builder") .. "/schema",
-        minetest.get_worldpath() .. "/schematics",
-        minetest.get_worldpath() .. "/schema",
-    }
-    
-    -- Add schematics mod path if it exists
-    if minetest.get_modpath("schematics") then
-        table.insert(search_paths, minetest.get_modpath("schematics") .. "/schematics")
+    -- ONLY look in the mod's schema folder
+    local mod_path = minetest.get_modpath("auto_we_builder")
+    if not mod_path then
+        minetest.log("error", "[Auto WE Builder] Could not get mod path!")
+        return
     end
     
-    for _, path in ipairs(search_paths) do
-        if path then
-            -- Use pcall to safely call list_dir
-            local success, files = pcall(minetest.list_dir, path)
-            if success and files and type(files) == "table" then
-                minetest.log("action", "[Auto WE Builder] Found path: " .. path .. " with " .. #files .. " files")
-                for _, file in ipairs(files) do
-                    if type(file) == "string" and file:match("%.we$") then
-                        -- Avoid duplicates
-                        local already_added = false
-                        for _, existing in ipairs(schema_files) do
-                            if existing == file then
-                                already_added = true
-                                break
-                            end
-                        end
-                        if not already_added then
-                            table.insert(schema_files, file)
-                            minetest.log("action", "[Auto WE Builder] Added schema: " .. file)
-                        end
-                    end
-                end
-            else
-                minetest.log("warning", "[Auto WE Builder] Could not read path: " .. tostring(path) .. " - Success: " .. tostring(success))
+    local schema_path = mod_path .. "/schema"
+    
+    minetest.log("action", "[Auto WE Builder] Checking schema path: " .. schema_path)
+    
+    -- Check if directory exists by trying to list it
+    local files = minetest.list_dir(schema_path)
+    
+    if not files then
+        minetest.log("error", "[Auto WE Builder] Could not access schema directory: " .. schema_path)
+        minetest.log("action", "[Auto WE Builder] Mod path is: " .. mod_path)
+        
+        -- Try to list mod path to see what's there
+        local mod_files = minetest.list_dir(mod_path)
+        if mod_files then
+            minetest.log("action", "[Auto WE Builder] Files in mod folder:")
+            for _, f in ipairs(mod_files) do
+                minetest.log("action", "  - " .. f)
             end
+        else
+            minetest.log("error", "[Auto WE Builder] Cannot list mod folder either!")
+        end
+        
+        return
+    end
+    
+    minetest.log("action", "[Auto WE Builder] Found " .. #files .. " files in schema folder")
+    
+    -- Filter for .we files
+    for _, file in ipairs(files) do
+        if type(file) == "string" and file:match("%.we$") then
+            table.insert(schema_files, file)
+            minetest.log("action", "[Auto WE Builder] Added schema: " .. file)
         end
     end
     
@@ -424,15 +445,8 @@ function auto_we_builder.show_building_menu(player, npc_entity)
     
     if #schema_files == 0 then
         formspec = formspec .. "label[1,2;No .we files found!]"
-        formspec = formspec .. "label[1,3;Place files in world/schematics or mod/schema folder]"
-        -- List available paths for debugging
-        local y_debug = 4
-        for _, path in ipairs(search_paths) do
-            if path then
-                formspec = formspec .. "label[1," .. y_debug .. ";Checked: " .. path .. "]"
-                y_debug = y_debug + 0.4
-            end
-        end
+        formspec = formspec .. "label[1,3;Place files in mod/schema folder]"
+        formspec = formspec .. "label[1,3.5;Path: " .. schema_path .. "]"
     else
         local y_pos = 1.5
         local count = 0
@@ -494,30 +508,24 @@ end)
 
 -- Function to parse .we file and start building
 function auto_we_builder.start_building(npc, schema_file)
-    -- Find the schema file
-    local schema_path = nil
-    local search_paths = {
-        auto_we_builder.schema_path,
-        minetest.get_modpath("auto_we_builder") .. "/schema",
-    }
-    
-    for _, path in ipairs(search_paths) do
-        if path then
-            local full_path = path .. "/" .. schema_file
-            local f = io.open(full_path, "r")
-            if f then
-                schema_path = full_path
-                f:close()
-                break
-            end
-        end
-    end
-    
-    if not schema_path then
+    -- Find the schema file ONLY in mod's schema folder
+    local mod_path = minetest.get_modpath("auto_we_builder")
+    if not mod_path then
         minetest.chat_send_player(npc._player_follow and npc._player_follow:get_player_name() or "singleplayer", 
-            "Error: Schema file not found: " .. schema_file)
+            "Error: Could not find mod path!")
         return
     end
+    
+    local schema_path = mod_path .. "/schema/" .. schema_file
+    
+    local f = io.open(schema_path, "r")
+    if not f then
+        minetest.chat_send_player(npc._player_follow and npc._player_follow:get_player_name() or "singleplayer", 
+            "Error: Schema file not found: " .. schema_file)
+        minetest.log("error", "[Auto WE Builder] Cannot open: " .. schema_path)
+        return
+    end
+    f:close()
     
     -- Parse the .we file
     local blocks = auto_we_builder.parse_we_file(schema_path)
