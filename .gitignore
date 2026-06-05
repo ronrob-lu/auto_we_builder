@@ -1,1 +1,632 @@
-Nothing should be ignored based on the provided file changes. The modification of 'auto_we_builder/init.lua' represents a source code file change, which does not necessitate adding any entries to the .gitignore file.
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+#   For a library or package, you might want to ignore these files since the code is
+#   intended to run in multiple environments; otherwise, check them in:
+.python-version
+
+# pipenv
+#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
+#   However, in case of collaboration, if having platform-specific dependencies or dependencies
+#   having no cross-platform support, pipenv may install dependencies that don't work, or not
+#   install all needed dependencies.
+Pipfile.lock
+
+# poetry
+#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
+#   This is especially recommended for binary packages to ensure reproducibility, and is more
+#   commonly ignored for libraries.
+#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
+poetry.lock
+#   poetry stores virtualenvs in {project}/.venv by default, so we'll exclude that too
+.venv/
+venv/
+env/
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Coverage
+coverage/
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+
+# Lua specific
+*.luac
+.luacache
+
+# Node modules (in case of mixed projects)
+node_modules/
+
+# Gradle
+.gradle/
+build/
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+*.so
+
+# C/C++
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+*.out
+*.pdb
+
+# Go
+*.exe
+*.test
+*.prof
+*.syso
+
+# Rust
+target/
+
+# Julia
+.julia/
+julia-*/
+
+# Zig
+zig-out/
+zig-cache/
+
+# Configuration
+*.cfg
+*.conf
+*.ini
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Backup files
+*~
+*.bak
+*.backup
+
+# Editor swap files
+*.swp
+*.swo
+
+# Sensitive files
+config/secrets.*
+secrets.*
+.secret
+.env*
+!.env.example
+
+# GitHub Copilot
+.github/copilot/
+
+# Platform-specific
+*.dll
+*.so
+*.dylib
+*.exe
+*.bin
+
+# Cache directories
+.cache/
+*.cache
+
+# Lock files
+*.lock
+package-lock.json
+yarn.lock
+
+# Test files
+*.test
+.test
+
+# Binary files
+*.bin
+*.dat
+*.bin.*
+
+# Local configuration
+.local
+
+# Vim
+*.un~
+Session.vim
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Atom
+.atom/
+
+# Sublime Text
+*.sublime-workspace
+*.tmlanguage.cache
+*.tmPreferences.cache
+*.sublime-gpg.cache
+
+# Visual Studio
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# Notepad++
+*.bak
+
+# TeXstudio
+*.aux
+*.bbl
+*.blg
+*.idx
+*.ind
+*.lof
+*.lot
+*.out
+*.toc
+*.synctex.gz
+
+# CodeLite
+.codelite/
+.project
+.workspace
+.session
+
+# NetBeans
+nbproject/
+build/
+dist/
+nbbuild/
+nbdist/
+.netbeans_preferences
+
+# Eclipse
+.metadata
+bin/
+tmp/
+*.tmp
+*.bak
+*.swp
+*~
+.project
+.classpath
+.settings/
+.loadpath
+.target
+.factorypath
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# NetBeans
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# Visual Studio Code
+.vscode/tasks.json
+.vscode/launch.json
+.vscode/settings.json
+
+# Android
+*.apk
+*.aar
+*.aab
+*.ap_
+build/
+.externalNativeBuild
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+*.framework
+*.app
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.manifest
+install_manifest.txt
+compile_commands.json
+
+# Qt Creator
+*.pro.user
+*.pro.user.*
+*.qbs.user
+*.qbs.user.*
+*.moc
+*.moc.cpp
+*.qm
+*.prl
+*.pri
+
+# Unity
+Library/
+Temp/
+Obj/
+Build/
+Logs/
+*.unityproj
+*.userprefs
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+*.pidb
+*.pdb
+*.mdb
+*.asset.meta
+*.prefab.meta
+*.unity.meta
+*.mat.meta
+*.anim.meta
+*.controller.meta
+*.mask.meta
+*.physicsMaterial.meta
+*.physicsMaterial2D.meta
+*.assetbundle.meta
+*.guiskin.meta
+*.fontsettings.meta
+*.giparams.meta
+*.compute.meta
+*.cginc.meta
+*.asmdef.meta
+*.rsp.meta
+*.asmref.meta
+*.asm.meta
+*.shader.meta
+*.hlsl.meta
+*.glsl.meta
+*.usml.meta
+*.uss.meta
+*.ttf.meta
+*.otf.meta
+*.mat
+*.anim
+*.controller
+*.mask
+*.physicsMaterial
+*.physicsMaterial2D
+*.assetbundle
+*.guiskin
+*.fontsettings
+*.giparams
+*.compute
+*.cginc
+*.asmdef
+*.rsp
+*.asmref
+*.asm
+*.shader
+*.hlsl
+*.glsl
+*.usml
+*.uss
+*.ttf
+*.otf
+*.unity
+*.unitypackage
+*.prefab
+*.spriteatlas
+*.terrainlayer
+*.renderTexture
+*.cubemap
+*.flare
+*.mat
+*.anim
+*.controller
+*.mask
+*.physicsMaterial
+*.physicsMaterial2D
+*.assetbundle
+*.guiskin
+*.fontsettings
+*.giparams
+*.compute
+*.cginc
+*.asmdef
+*.rsp
+*.asmref
+*.asm
+*.shader
+*.hlsl
+*.glsl
+*.usml
+*.uss
+*.ttf
+*.otf
+
+# Godot
+.godot/
+*.import
+*.remap
+*.fnt
+*.tres
+*.res
+*.escn
+*.tscn
+*.gd
+*.gdc
+*.gde
+*.gdns
+*.gdn
+*.gdnlib
+*.godot
+*.scn
+*.dae
+*.obj
+*.fbx
+*.blend
+*.max
+*.ma
+*.mb
+*.3ds
+*.ase
+*.ply
+*.stl
+*.wrl
+*.vrml
+*.x3d
+*.x3dv
+*.x3db
+*.x3dz
+*.x3dp
+*.x3dvz
+*.x3dbz
+*.x3dpz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dvbz
+*.x3dbbz
+*.x3dpbz
+*.x3dv......
