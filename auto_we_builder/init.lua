@@ -407,15 +407,17 @@ function auto_we_builder.show_building_menu(player, npc_entity)
     
     minetest.log("action", "[Auto WE Builder] Checking schema path: " .. schema_path)
     
-    -- Safety check: ensure minetest.list_dir exists
-    if not minetest.list_dir then
-        minetest.log("error", "[Auto WE Builder] CRITICAL ERROR: minetest.list_dir function does not exist in this Minetest version!")
+    -- Compatibility fix: Try different directory listing functions
+    local files = nil
+    if minetest.list_dir then
+        files = minetest.list_dir(schema_path)
+    elseif minetest.get_dir_list then
+        files = minetest.get_dir_list(schema_path)
+    else
+        minetest.log("error", "[Auto WE Builder] CRITICAL ERROR: No directory listing function available in this Minetest version!")
         minetest.log("error", "[Auto WE Builder] Please update your Minetest installation.")
         return
     end
-    
-    -- Check if directory exists by trying to list it
-    local files = minetest.list_dir(schema_path)
     
     if not files then
         minetest.log("error", "[Auto WE Builder] Could not access schema directory: " .. schema_path)
