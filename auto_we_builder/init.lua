@@ -99,13 +99,24 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             return
         end
         local anim = self.animations[anim_name]
-        if not anim then
-            minetest.log("warning", "[Auto WE Builder] Animation not found: " .. tostring(anim_name))
+        if not anim or not anim.range then
+            minetest.log("warning", "[Auto WE Builder] Animation not found or invalid: " .. tostring(anim_name))
+            return
+        end
+        -- Ensure range values are numbers
+        if type(anim.range) ~= "table" or #anim.range < 2 then
+            minetest.log("warning", "[Auto WE Builder] Invalid animation range for: " .. tostring(anim_name))
+            return
+        end
+        local start_frame = tonumber(anim.range[1])
+        local end_frame = tonumber(anim.range[2])
+        if not start_frame or not end_frame then
+            minetest.log("warning", "[Auto WE Builder] Invalid animation frame numbers for: " .. tostring(anim_name))
             return
         end
         if self._last_anim ~= anim_name then
             self.object:set_animation(
-                anim.range,
+                {x = start_frame, y = end_frame},
                 anim.speed,
                 0,
                 anim.loop
