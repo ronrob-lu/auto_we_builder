@@ -259,6 +259,8 @@ minetest.register_entity("auto_we_builder:npc_builder", {
         if not self._building or #self._build_queue == 0 then
             self._building = false
             self:_set_animation("stand")
+            minetest.chat_send_player(self._player_follow and self._player_follow:get_player_name() or "singleplayer", 
+                "Building complete!")
             return
         end
         
@@ -271,37 +273,52 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             return
         end
         
-        -- Check if we need to move up a layer
-        if block.y > self._build_layer then
-            -- Move NPC up to the new layer
-            local pos = self.object:getpos()
-            if pos then
-                pos.y = block.y - 1  -- Stand one block below the building layer
-                self.object:setpos(pos)
-            end
-            self._build_layer = block.y
-        end
-        
         -- Set building animation
         self:_set_animation("build")
         
-        -- Place the block
+        -- Get current NPC position
         local current_pos = self.object:getpos()
         if not current_pos then
             return
         end
         
+        -- Calculate absolute build position relative to NPC
+        -- The NPC stands at the build site, blocks are placed around it
+        local npc_x = math.floor(current_pos.x + 0.5)
+        local npc_z = math.floor(current_pos.z + 0.5)
+        local npc_y = math.floor(current_pos.y)
+        
+        -- Build position: offset from NPC based on schema coordinates
         local build_pos = vector.new(
-            math.floor(current_pos.x + 0.5) + block.x,
-            block.y,
-            math.floor(current_pos.z + 0.5) + block.z
+            npc_x + block.x,
+            npc_y + block.y,
+            npc_z + block.z
         )
+        
+        -- Check if we need to move up a layer
+        if block.y > (self._last_build_y or 0) then
+            -- Move NPC up to stand on the completed layer
+            local new_y = npc_y + (block.y - (self._last_build_y or 0))
+            local target_pos = vector.new(current_pos.x, new_y, current_pos.z)
+            
+            -- Verify there's ground below
+            local ground_check = vector.new(target_pos.x, target_pos.y - 1, target_pos.z)
+            local node_below = minetest.get_node_or_nil(ground_check)
+            local has_ground = node_below and minetest.registered_nodes[node_below.name] and minetest.registered_nodes[node_below.name].walkable
+            
+            if has_ground or block.y == (self._last_build_y or 0) + 1 then
+                self.object:setpos(target_pos)
+                current_pos = target_pos
+                npc_y = new_y
+            end
+            self._last_build_y = block.y
+        end
         
         -- Check if the position is valid
         local node = minetest.get_node_or_nil(build_pos)
-        if node and node.name ~= "air" then
+        if node and node.name ~= "air" and node.name ~= "ignore" then
             -- Position occupied, skip this block
-            minetest.after(0.5, function()
+            minetest.after(0.3, function()
                 self:_build_next_block()
             end)
             return
@@ -324,17 +341,27 @@ minetest.register_entity("auto_we_builder:npc_builder", {
                         meta:set_string(key, value)
                     end
                 end
-                if block.meta.inventory then
-                    -- Handle inventory (simplified)
-                end
             end
             
             -- Sound effect for placing block
             minetest.sound_play("dig_crack", {pos = build_pos, gain = 0.5})
+            
+            -- Debug particle
+            minetest.add_particle({
+                pos = build_pos,
+                velocity = {x=0, y=0.1, z=0},
+                acceleration = {x=0, y=0.05, z=0},
+                expirationtime = 1.0,
+                size = 3,
+                color = {r=255, g=255, b=255, a=255},
+                texture = "bubble.png"
+            })
+        else
+            minetest.log("warning", "[Auto WE Builder] Unknown node: " .. tostring(block.name))
         end
         
         -- Schedule next block placement
-        minetest.after(0.3, function()
+        minetest.after(0.2, function()
             self:_build_next_block()
         end)
     end,
@@ -553,16 +580,29 @@ function auto_we_builder.start_building(npc, schema_file)
     -- Set NPC state
     npc._current_schema = schema_file
     npc._build_queue = blocks
-    npc._build_layer = blocks[1].y or 0
+    npc._last_build_y = blocks[1].y or 0
     npc._building = true
     
-    -- Move NPC to starting position
+    -- Ensure NPC is on ground before starting
     local pos = npc.object:getpos()
-    pos.y = blocks[1].y
-    npc.object:setpos(pos)
+    if pos then
+        -- Find ground at current position
+        for y = math.floor(pos.y), math.floor(pos.y) - 5, -1 do
+            local check_pos = vector.new(pos.x, y, pos.z)
+            local node = minetest.get_node_or_nil(check_pos)
+            if node and minetest.registered_nodes[node.name] and minetest.registered_nodes[node.name].walkable then
+                pos.y = y + 1
+                npc.object:setpos(pos)
+                break
+            end
+        end
+    end
     
-    minetest.chat_send_player(npc._player_follow and npc._player_follow:get_player_name() or "singleplayer", 
+    local player_name = npc._player_follow and npc._player_follow:get_player_name() or "singleplayer"
+    minetest.chat_send_player(player_name, 
         "Starting to build: " .. schema_file:gsub("%.we$", "") .. " (" .. #blocks .. " blocks)")
+    minetest.chat_send_player(player_name, 
+        "Watch the particles to see where blocks are being placed!")
 end
 
 -- Function to parse .we file format
