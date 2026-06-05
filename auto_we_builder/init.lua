@@ -150,14 +150,30 @@ minetest.register_entity("auto_we_builder:npc_builder", {
         
         -- Adjust Y to match ground level - find the actual ground
         local ground_y = target_pos.y
+        local found_ground = false
         for y = math.floor(target_pos.y), math.floor(target_pos.y) - 10, -1 do
             local check_pos = vector.new(target_pos.x, y, target_pos.z)
             local node = minetest.get_node_or_nil(check_pos)
             if node and minetest.registered_nodes[node.name] and minetest.registered_nodes[node.name].walkable then
                 ground_y = y + 1
+                found_ground = true
                 break
             end
         end
+        
+        -- If no ground found, use the original Y but ensure it's not floating too high
+        if not found_ground then
+            -- Raycast down to find ground
+            local start_pos = vector.new(target_pos.x, target_pos.y + 5, target_pos.z)
+            local hit = minetest.raycast(start_pos, vector.new(target_pos.x, target_pos.y - 10, target_pos.z), false, true)
+            local pointed = hit:next()
+            if pointed and pointed.type == "node" then
+                ground_y = math.floor(pointed.pos.y) + 1
+            else
+                ground_y = target_pos.y
+            end
+        end
+        
         target_pos.y = ground_y
         
         self._target_pos = target_pos
@@ -174,10 +190,21 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             -- Calculate movement direction
             local dir = vector.normalize(vector.subtract(target_pos, current_pos))
             
-            -- Move the NPC with proper gravity
+            -- Apply gravity and movement
             local velocity = self.object:get_velocity()
             local move_speed = 2
-            self.object:set_velocity(vector.new(dir.x * move_speed, velocity.y, dir.z * move_speed))
+            
+            -- Only apply horizontal movement, let gravity handle vertical
+            local new_velocity = vector.new(dir.x * move_speed, velocity.y, dir.z * move_speed)
+            
+            -- If on ground, reset vertical velocity to prevent floating
+            local below_pos = vector.new(current_pos.x, current_pos.y - 0.5, current_pos.z)
+            local node_below = minetest.get_node_or_nil(below_pos)
+            if node_below and minetest.registered_nodes[node_below.name] and minetest.registered_nodes[node_below.name].walkable then
+                new_velocity.y = 0
+            end
+            
+            self.object:set_velocity(new_velocity)
             
             -- Rotate to face movement direction
             local yaw = math.atan2(dir.x, dir.z)
@@ -192,6 +219,25 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             -- Face the same direction as player
             local player_yaw = player:get_look_horizontal()
             self.object:set_yaw(player_yaw + math.pi)
+            
+            -- Ensure NPC is on ground when stopped
+            local pos = self.object:getpos()
+            if pos then
+                local ground_check = vector.new(pos.x, pos.y - 0.5, pos.z)
+                local node = minetest.get_node_or_nil(ground_check)
+                if not (node and minetest.registered_nodes[node.name] and minetest.registered_nodes[node.name].walkable) then
+                    -- Not on ground, find ground
+                    for y = math.floor(pos.y), math.floor(pos.y) - 10, -1 do
+                        local check_pos = vector.new(pos.x, y, pos.z)
+                        local n = minetest.get_node_or_nil(check_pos)
+                        if n and minetest.registered_nodes[n.name] and minetest.registered_nodes[n.name].walkable then
+                            pos.y = y + 1
+                            self.object:setpos(pos)
+                            break
+                        end
+                    end
+                end
+            end
             
             -- Set standing animation if not building
             if not self._building then
@@ -331,14 +377,18 @@ function auto_we_builder.show_building_menu(player, npc_entity)
     local search_paths = {
         auto_we_builder.schema_path,
         minetest.get_modpath("auto_we_builder") .. "/schema",
-        minetest.get_modpath("schematics") and (minetest.get_modpath("schematics") .. "/schematics"),
     }
+    
+    -- Add schematics mod path if it exists
+    if minetest.get_modpath("schematics") then
+        table.insert(search_paths, minetest.get_modpath("schematics") .. "/schematics")
+    end
     
     for _, path in ipairs(search_paths) do
         if path then
             -- Check if directory exists by trying to list it
-            local files = minetest.list_dir(path)
-            if files then
+            local success, files = pcall(minetest.list_dir, path)
+            if success and files and type(files) == "table" then
                 for _, file in ipairs(files) do
                     if file:match("%.we$") then
                         table.insert(schema_files, file)
@@ -350,8 +400,8 @@ function auto_we_builder.show_building_menu(player, npc_entity)
     
     -- Also check world's schema folder if it exists
     local world_schema = minetest.get_worldpath() .. "/schema"
-    local files = minetest.list_dir(world_schema)
-    if files then
+    local success, files = pcall(minetest.list_dir, world_schema)
+    if success and files and type(files) == "table" then
         for _, file in ipairs(files) do
             if file:match("%.we$") then
                 table.insert(schema_files, file)
