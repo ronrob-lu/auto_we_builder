@@ -131,8 +131,9 @@ minetest.register_entity("auto_we_builder:npc_builder", {
 
     on_activate = function(self, staticdata, dtime_s)
         self.object:set_armor_groups({immortal = 1})
-        -- Fix: Use separate arguments for start/end frames instead of tables
-        self.object:set_animation(0, 45, 15, true)
+        -- Fix: set_animation expects (range_table, speed, loop, blend)
+        -- range_table must be {x=start, y=end}
+        self.object:set_animation({x=0, y=45}, 15, true, 0.2)
         self.state = "IDLE"
         self.last_build_time = minetest.get_us_time() / 1000000.0
     end,
@@ -171,8 +172,8 @@ minetest.register_entity("auto_we_builder:npc_builder", {
         if not player then 
             self.state = "IDLE"
             self.object:set_velocity({x=0, y=0, z=0})
-            -- Fix: Use separate arguments for start/end frames
-            self.object:set_animation(0, 45, 15, true)
+            -- Fix: set_animation expects (range_table, speed, loop, blend)
+            self.object:set_animation({x=0, y=45}, 15, true, 0.2)
             return 
         end
 
@@ -211,13 +212,13 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             self.object:set_yaw(yaw)
             self.facing_direction = (math.deg(math.atan2(dir.z, dir.x)) + 90) % 360
             
-            -- Fix: Use separate arguments for start/end frames
-            self.object:set_animation(160, 180, 30, true)
+            -- Fix: set_animation expects (range_table, speed, loop, blend)
+            self.object:set_animation({x=160, y=180}, 30, true, 0.2)
         else
             self.state = "IDLE"
             self.object:set_velocity({x=0, y=0, z=0})
-            -- Fix: Use separate arguments for start/end frames
-            self.object:set_animation(0, 45, 15, true)
+            -- Fix: set_animation expects (range_table, speed, loop, blend)
+            self.object:set_animation({x=0, y=45}, 15, true, 0.2)
             
             -- Snap to ground if idle
             local my_ground = self:find_ground(pos)
@@ -235,8 +236,8 @@ minetest.register_entity("auto_we_builder:npc_builder", {
         if self.current_block_index > #self.build_queue then
             self.state = "IDLE"
             minetest.chat_send_all("[Auto WE Builder] Finished building!")
-            -- Fix: Use separate arguments for start/end frames
-            self.object:set_animation(0, 45, 15, true)
+            -- Fix: set_animation expects (range_table, speed, loop, blend)
+            self.object:set_animation({x=0, y=45}, 15, true, 0.2)
             return
         end
 
@@ -277,7 +278,8 @@ minetest.register_entity("auto_we_builder:npc_builder", {
                 texture = "default_stone.png",
             })
 
-            self.object:set_animation(185, 205, 30, false)
+            -- Fix: set_animation expects (range_table, speed, loop, blend)
+            self.object:set_animation({x=185, y=205}, 30, false, 0.2)
             self.last_build_time = now
             self.current_block_index = self.current_block_index + 1
             
@@ -301,8 +303,8 @@ minetest.register_entity("auto_we_builder:npc_builder", {
         
         self.base_pos.y = self.base_pos.y + 1
         self.state = "BUILDING"
-        -- Fix: Use separate arguments for start/end frames
-        self.object:set_animation(0, 45, 15, true)
+        -- Fix: set_animation expects (range_table, speed, loop, blend)
+        self.object:set_animation({x=0, y=45}, 15, true, 0.2)
     end,
 
     -- Helpers
