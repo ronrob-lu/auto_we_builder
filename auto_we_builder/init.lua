@@ -159,7 +159,7 @@ minetest.register_entity("auto_we_builder:npc_builder", {
         local pointed = hit:next()
         
         local target_y
-        if pointed and pointed.type == "node" then
+        if pointed and pointed.type == "node" and pointed.pos then
             target_y = math.floor(pointed.pos.y) + 1
         else
             -- Fallback: search manually
