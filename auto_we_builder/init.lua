@@ -95,12 +95,20 @@ minetest.register_entity("auto_we_builder:npc_builder", {
     
     -- Helper function to set animation
     _set_animation = function(self, anim_name)
+        if not self.object then
+            return
+        end
+        local anim = self.animations[anim_name]
+        if not anim then
+            minetest.log("warning", "[Auto WE Builder] Animation not found: " .. tostring(anim_name))
+            return
+        end
         if self._last_anim ~= anim_name then
             self.object:set_animation(
-                self.animations[anim_name].range,
-                self.animations[anim_name].speed,
+                anim.range,
+                anim.speed,
                 0,
-                self.animations[anim_name].loop
+                anim.loop
             )
             self._last_anim = anim_name
         end
@@ -108,11 +116,15 @@ minetest.register_entity("auto_we_builder:npc_builder", {
     
     -- Follow player logic
     _follow_player = function(self, player)
-        if not player or not player:is_player() then
+        if not self.object or not player or not player:is_player() then
             return
         end
         
         local player_pos = player:getpos()
+        if not player_pos then
+            return
+        end
+        
         local player_look = player:get_look_horizontal()
         
         -- Calculate position behind player
@@ -127,12 +139,12 @@ minetest.register_entity("auto_we_builder:npc_builder", {
         
         -- Adjust Y to match ground level
         local node_below = minetest.get_node_or_nil(vector.new(target_pos.x, target_pos.y - 1, target_pos.z))
-        if node_below and not minetest.registered_nodes[node_below.name].walkable then
+        if node_below and minetest.registered_nodes[node_below.name] and not minetest.registered_nodes[node_below.name].walkable then
             -- Find ground
             for y = target_pos.y, target_pos.y - 10, -1 do
                 local check_pos = vector.new(target_pos.x, y, target_pos.z)
                 local node = minetest.get_node_or_nil(check_pos)
-                if node and minetest.registered_nodes[node.name].walkable then
+                if node and minetest.registered_nodes[node.name] and minetest.registered_nodes[node.name].walkable then
                     target_pos.y = y + 1
                     break
                 end
@@ -143,6 +155,10 @@ minetest.register_entity("auto_we_builder:npc_builder", {
         
         -- Move towards target
         local current_pos = self.object:getpos()
+        if not current_pos then
+            return
+        end
+        
         local dist = vector.distance(current_pos, target_pos)
         
         if dist > 0.5 then
@@ -176,6 +192,10 @@ minetest.register_entity("auto_we_builder:npc_builder", {
     
     -- Building logic
     _build_next_block = function(self)
+        if not self.object then
+            return
+        end
+        
         if not self._building or #self._build_queue == 0 then
             self._building = false
             self:_set_animation("stand")
@@ -195,8 +215,10 @@ minetest.register_entity("auto_we_builder:npc_builder", {
         if block.y > self._build_layer then
             -- Move NPC up to the new layer
             local pos = self.object:getpos()
-            pos.y = block.y
-            self.object:setpos(pos)
+            if pos then
+                pos.y = block.y
+                self.object:setpos(pos)
+            end
             self._build_layer = block.y
         end
         
@@ -204,7 +226,12 @@ minetest.register_entity("auto_we_builder:npc_builder", {
         self:_set_animation("build")
         
         -- Place the block
-        local build_pos = vector.add(self.object:getpos(), vector.new(block.x, block.y, block.z))
+        local current_pos = self.object:getpos()
+        if not current_pos then
+            return
+        end
+        
+        local build_pos = vector.add(current_pos, vector.new(block.x, block.y, block.z))
         
         -- Check if the position is valid
         local node = minetest.get_node_or_nil(build_pos)
@@ -249,17 +276,23 @@ minetest.register_entity("auto_we_builder:npc_builder", {
     end,
     
     on_step = function(self, dtime)
+        if not self.object then
+            return
+        end
+        
         -- Find player to follow
         local player = self._player_follow
         if not player or not player:is_player() then
             -- Find nearest player
             local pos = self.object:getpos()
-            local objects = minetest.get_objects_in_area(vector.offset(pos, -20, -10, -20), vector.offset(pos, 20, 10, 20))
-            for _, obj in ipairs(objects) do
-                if obj:is_player() then
-                    player = obj
-                    self._player_follow = player
-                    break
+            if pos then
+                local objects = minetest.get_objects_in_area(vector.offset(pos, -20, -10, -20), vector.offset(pos, 20, 10, 20))
+                for _, obj in ipairs(objects) do
+                    if obj:is_player() then
+                        player = obj
+                        self._player_follow = player
+                        break
+                    end
                 end
             end
         end
