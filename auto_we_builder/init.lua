@@ -131,6 +131,13 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             return
         end
         
+        -- CRITICAL FIX: Always sync self.pos with actual object position first
+        local current_obj_pos = self.object:getpos()
+        if not current_obj_pos then
+            return -- Object removed
+        end
+        self.pos = current_obj_pos -- Update internal pos to prevent nil errors
+        
         local player_pos = player:getpos()
         if not player_pos then
             return
@@ -372,7 +379,6 @@ function auto_we_builder.show_building_menu(player, npc_entity)
     
     -- Look for .we files in multiple locations
     local search_paths = {
-        auto_we_builder.schema_path,
         minetest.get_modpath("auto_we_builder") .. "/schema",
         minetest.get_worldpath() .. "/schematics",
         minetest.get_worldpath() .. "/schema",
@@ -385,9 +391,10 @@ function auto_we_builder.show_building_menu(player, npc_entity)
     
     for _, path in ipairs(search_paths) do
         if path then
-            -- Try to list directory contents
-            local files = minetest.list_dir(path)
-            if files and type(files) == "table" then
+            -- Use pcall to safely call list_dir
+            local success, files = pcall(minetest.list_dir, path)
+            if success and files and type(files) == "table" then
+                minetest.log("action", "[Auto WE Builder] Found path: " .. path .. " with " .. #files .. " files")
                 for _, file in ipairs(files) do
                     if type(file) == "string" and file:match("%.we$") then
                         -- Avoid duplicates
@@ -400,9 +407,12 @@ function auto_we_builder.show_building_menu(player, npc_entity)
                         end
                         if not already_added then
                             table.insert(schema_files, file)
+                            minetest.log("action", "[Auto WE Builder] Added schema: " .. file)
                         end
                     end
                 end
+            else
+                minetest.log("warning", "[Auto WE Builder] Could not read path: " .. tostring(path) .. " - Success: " .. tostring(success))
             end
         end
     end
@@ -419,7 +429,7 @@ function auto_we_builder.show_building_menu(player, npc_entity)
         local y_debug = 4
         for _, path in ipairs(search_paths) do
             if path then
-                formspec = formspec .. "label[1," .. y_debug .. ";" .. path .. "]"
+                formspec = formspec .. "label[1," .. y_debug .. ";Checked: " .. path .. "]"
                 y_debug = y_debug + 0.4
             end
         end
