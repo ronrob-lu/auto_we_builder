@@ -148,19 +148,17 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             player_pos.z + offset_z
         )
         
-        -- Adjust Y to match ground level
-        local node_below = minetest.get_node_or_nil(vector.new(target_pos.x, target_pos.y - 1, target_pos.z))
-        if node_below and minetest.registered_nodes[node_below.name] and not minetest.registered_nodes[node_below.name].walkable then
-            -- Find ground
-            for y = target_pos.y, target_pos.y - 10, -1 do
-                local check_pos = vector.new(target_pos.x, y, target_pos.z)
-                local node = minetest.get_node_or_nil(check_pos)
-                if node and minetest.registered_nodes[node.name] and minetest.registered_nodes[node.name].walkable then
-                    target_pos.y = y + 1
-                    break
-                end
+        -- Adjust Y to match ground level - find the actual ground
+        local ground_y = target_pos.y
+        for y = math.floor(target_pos.y), math.floor(target_pos.y) - 10, -1 do
+            local check_pos = vector.new(target_pos.x, y, target_pos.z)
+            local node = minetest.get_node_or_nil(check_pos)
+            if node and minetest.registered_nodes[node.name] and minetest.registered_nodes[node.name].walkable then
+                ground_y = y + 1
+                break
             end
         end
+        target_pos.y = ground_y
         
         self._target_pos = target_pos
         
@@ -170,15 +168,16 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             return
         end
         
-        local dist = vector.distance(current_pos, target_pos)
+        local dist = vector.distance(vector.new(current_pos.x, current_pos.y, current_pos.z), vector.new(target_pos.x, target_pos.y, target_pos.z))
         
         if dist > 0.5 then
             -- Calculate movement direction
             local dir = vector.normalize(vector.subtract(target_pos, current_pos))
             
-            -- Move the NPC
+            -- Move the NPC with proper gravity
             local velocity = self.object:get_velocity()
-            self.object:set_velocity(vector.new(dir.x * 2, velocity.y, dir.z * 2))
+            local move_speed = 2
+            self.object:set_velocity(vector.new(dir.x * move_speed, velocity.y, dir.z * move_speed))
             
             -- Rotate to face movement direction
             local yaw = math.atan2(dir.x, dir.z)
@@ -227,7 +226,7 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             -- Move NPC up to the new layer
             local pos = self.object:getpos()
             if pos then
-                pos.y = block.y
+                pos.y = block.y - 1  -- Stand one block below the building layer
                 self.object:setpos(pos)
             end
             self._build_layer = block.y
@@ -242,7 +241,11 @@ minetest.register_entity("auto_we_builder:npc_builder", {
             return
         end
         
-        local build_pos = vector.add(current_pos, vector.new(block.x, block.y, block.z))
+        local build_pos = vector.new(
+            math.floor(current_pos.x + 0.5) + block.x,
+            block.y,
+            math.floor(current_pos.z + 0.5) + block.z
+        )
         
         -- Check if the position is valid
         local node = minetest.get_node_or_nil(build_pos)
@@ -332,7 +335,8 @@ function auto_we_builder.show_building_menu(player, npc_entity)
     }
     
     for _, path in ipairs(search_paths) do
-        if path and minetest.is_dir(path) then
+        if path then
+            -- Check if directory exists by trying to list it
             local files = minetest.list_dir(path)
             if files then
                 for _, file in ipairs(files) do
@@ -346,13 +350,11 @@ function auto_we_builder.show_building_menu(player, npc_entity)
     
     -- Also check world's schema folder if it exists
     local world_schema = minetest.get_worldpath() .. "/schema"
-    if minetest.is_dir(world_schema) then
-        local files = minetest.list_dir(world_schema)
-        if files then
-            for _, file in ipairs(files) do
-                if file:match("%.we$") then
-                    table.insert(schema_files, file)
-                end
+    local files = minetest.list_dir(world_schema)
+    if files then
+        for _, file in ipairs(files) do
+            if file:match("%.we$") then
+                table.insert(schema_files, file)
             end
         end
     end
