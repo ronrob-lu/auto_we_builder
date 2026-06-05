@@ -1,14 +1,14 @@
--- Auto WE Builder Mod - Fixed Version
--- Features: Smooth movement, Realistic building delay, Correct shape parsing
+-- Auto WE Builder Mod - Complete Fixed Version
+-- Features: No floating, Realistic building delay (0.5s per block), Correct .we file parsing
 
 local modpath = minetest.get_modpath("auto_we_builder")
 local S = minetest.get_translator("auto_we_builder")
 
 -- Configuration
-local BUILD_DELAY = 0.5 -- Seconds between each block placement (Fixes instant build)
+local BUILD_DELAY = 0.5 -- Seconds between each block placement
 local WALK_SPEED = 2.5
 
--- Helper: Parse .we file format
+-- Helper: Parse .we file format (handles both binary Lua and text formats)
 local function parse_we_file(filename)
     local filepath = modpath .. "/schema/" .. filename
     local file = io.open(filepath, "r")
@@ -20,45 +20,77 @@ local function parse_we_file(filename)
     local content = file:read("*all")
     file:close()
 
-    -- Remove version header if present (e.g., "5:..." or "2:...")
-    local header_end = content:find("\n")
-    if header_end and content:sub(1, 2):match("%d+:") then
-        content = content:sub(header_end + 1)
-    end
-
     local blocks = {}
     local min_x, min_y, min_z = math.huge, math.huge, math.huge
     local max_x, max_y, max_z = -math.huge, -math.huge, -math.huge
 
-    -- Simple parser for node lines: "x y z nodename param1 param2 ..."
-    for line in content:gmatch("[^\n]+") do
-        -- Skip comments or empty lines
-        if not line:match("^#") and line:trim() ~= "" then
-            local parts = {}
-            for part in line:gmatch("%S+") do
-                table.insert(parts, part)
+    -- Try to detect format: if starts with number followed by colon, it's serialized Lua
+    if content:match("^%d+:") then
+        -- This is a serialized Lua format (WorldEdit export)
+        -- Use loadstring/load to safely execute and get the data
+        local func
+        if loadstring then
+            func = loadstring(content)
+        else
+            func = load(content, filename, "t", {})
+        end
+        
+        if not func then
+            minetest.log("error", "[Auto WE Builder] Failed to load schema: " .. filename)
+            return nil
+        end
+        
+        local success, data = pcall(func)
+        if not success or not data then
+            minetest.log("error", "[Auto WE Builder] Schema returned no data: " .. filename)
+            return nil
+        end
+        
+        -- Data is now a table of block objects
+        for _, b in ipairs(data) do
+            if b.x and b.y and b.z and b.name then
+                table.insert(blocks, {x=b.x, y=b.y, z=b.z, name=b.name})
+                if b.x < min_x then min_x = b.x end
+                if b.y < min_y then min_y = b.y end
+                if b.z < min_z then min_z = b.z end
+                if b.x > max_x then max_x = b.x end
+                if b.y > max_y then max_y = b.y end
+                if b.z > max_z then max_z = b.z end
             end
+        end
+    else
+        -- Plain text format: "x y z nodename ..."
+        for line in content:gmatch("[^\n]+") do
+            if not line:match("^#") and line:trim() ~= "" then
+                local parts = {}
+                for part in line:gmatch("%S+") do
+                    table.insert(parts, part)
+                end
 
-            if #parts >= 4 then
-                local x = tonumber(parts[1])
-                local y = tonumber(parts[2])
-                local z = tonumber(parts[3])
-                local nodename = parts[4]
+                if #parts >= 4 then
+                    local x = tonumber(parts[1])
+                    local y = tonumber(parts[2])
+                    local z = tonumber(parts[3])
+                    local nodename = parts[4]
 
-                if x and y and z then
-                    table.insert(blocks, {x=x, y=y, z=z, name=nodename})
-                    if x < min_x then min_x = x end
-                    if y < min_y then min_y = y end
-                    if z < min_z then min_z = z end
-                    if x > max_x then max_x = x end
-                    if y > max_y then max_y = y end
-                    if z > max_z then max_z = z end
+                    if x and y and z then
+                        table.insert(blocks, {x=x, y=y, z=z, name=nodename})
+                        if x < min_x then min_x = x end
+                        if y < min_y then min_y = y end
+                        if z < min_z then min_z = z end
+                        if x > max_x then max_x = x end
+                        if y > max_y then max_y = y end
+                        if z > max_z then max_z = z end
+                    end
                 end
             end
         end
     end
 
-    if #blocks == 0 then return nil end
+    if #blocks == 0 then 
+        minetest.log("error", "[Auto WE Builder] No blocks found in: " .. filename)
+        return nil 
+    end
 
     -- Normalize coordinates to start at 0,0,0 relative to the structure
     for _, b in ipairs(blocks) do
@@ -103,7 +135,7 @@ minetest.register_entity("auto_we_builder:npc", {
         mesh = "character.b3d",
         textures = {"auto_we_builder_char.png"},
         makes_footstep_sound = true,
-        automatic_rotate = false, -- Fixed: must be boolean or number depending on MT version, false is safe for most
+        automatic_rotate = 0,
         animations = {
             stand = {range = {x=0, y=79}, speed=30, loop=true},
             walk = {range = {x=168, y=187}, speed=30, loop=true},
@@ -120,12 +152,15 @@ minetest.register_entity("auto_we_builder:npc", {
         self.state = "IDLE"
         self.build_queue = {}
         self.last_build_time = 0
-        self.base_y = nil -- Ground level lock
+        self.base_y = nil
         self.object:set_animation({x=0, y=79}, 30, 0)
         
-        if self.base_y then
-            local pos = self.object:get_pos()
-            if pos then
+        -- Ensure we start on ground
+        local pos = self.object:get_pos()
+        if pos then
+            local ground = minetest.raycast(pos, {x=pos.x, y=pos.y-2, z=pos.z}, false, true):next()
+            if ground then
+                self.base_y = ground.pos.y + 1
                 pos.y = self.base_y
                 self.object:set_pos(pos)
             end
@@ -138,8 +173,74 @@ minetest.register_entity("auto_we_builder:npc", {
         
         local vel = self.object:get_velocity()
         
-        -- 1. Ground Detection & Floating Fix
-        -- Raycast down to find ground
+        -- STATE: BUILDING (With Delay) - NO GROUND CHECK WHILE BUILDING
+        if self.state == "BUILDING" then
+            local now = minetest.get_us_time() / 1000000
+            
+            if #self.build_queue > 0 and (now - self.last_build_time) >= BUILD_DELAY then
+                local block = self.build_queue[1]
+                table.remove(self.build_queue, 1)
+                
+                -- Place Block
+                local node_def = minetest.registered_nodes[block.name]
+                if node_def then
+                    minetest.set_node(block.world_pos, {name=block.name})
+                    -- Particle effect
+                    minetest.add_particlespawner({
+                        amount=3, time=0.1,
+                        minpos={x=block.world_pos.x-0.2, y=block.world_pos.y-0.2, z=block.world_pos.z-0.2},
+                        maxpos={x=block.world_pos.x+0.2, y=block.world_pos.y+0.2, z=block.world_pos.z+0.2},
+                        texture="bubble.png",
+                        velocity={x=0,y=1,z=0}, acceleration={x=0,y=-2,z=0}
+                    })
+                end
+                
+                self.last_build_time = now
+                
+                -- Play Build Animation
+                self.object:set_animation({x=190, y=210}, 15, 0)
+                
+                if #self.build_queue == 0 then
+                     self.state = "FINISH_LAYER"
+                     self.timer_finish = 0.5
+                end
+            else
+                 -- Waiting for delay, stand still
+                 self.object:set_animation({x=0, y=79}, 30, 0)
+            end
+            return -- Skip ground detection while building
+        end
+        
+        -- STATE: FINISH_LAYER
+        if self.state == "FINISH_LAYER" then
+            self.timer_finish = self.timer_finish - dtime
+            if self.timer_finish <= 0 then
+                self.state = "MOVING_UP"
+            end
+            self.object:set_animation({x=0, y=79}, 30, 0)
+            return
+        end
+        
+        -- STATE: MOVING_UP
+        if self.state == "MOVING_UP" then
+            local target_y = (self.base_y or pos.y) + 1
+            if pos.y < target_y - 0.5 then
+                vel.y = 5
+                self.object:set_velocity(vel)
+                self.object:set_animation({x=168, y=187}, 30, 1)
+            else
+                pos.y = target_y
+                self.object:set_pos(pos)
+                vel.y = 0
+                self.object:set_velocity(vel)
+                self.base_y = target_y
+                self.state = "IDLE"
+                minetest.chat_send_all("Layer completed!")
+            end
+            return
+        end
+        
+        -- IDLE STATE: Ground Detection & Floating Fix
         local ground_pos = minetest.raycast(pos, {x=pos.x, y=pos.y-2, z=pos.z}, false, true):next()
         local on_ground = false
         local current_ground_y = pos.y
@@ -174,74 +275,6 @@ minetest.register_entity("auto_we_builder:npc", {
                 self.object:set_velocity(vel)
             end
             if not self.base_y then self.base_y = current_ground_y end
-        end
-
-        -- 2. State Machine Logic
-        
-        -- STATE: BUILDING (With Delay)
-        if self.state == "BUILDING" then
-            local now = minetest.get_us_time() / 1000000
-            
-            if #self.build_queue > 0 and (now - self.last_build_time) >= BUILD_DELAY then
-                local block = self.build_queue[1]
-                table.remove(self.build_queue, 1)
-                
-                -- Place Block
-                local node_def = minetest.registered_nodes[block.name]
-                if node_def then
-                    minetest.set_node(block.world_pos, {name=block.name})
-                    -- Particle effect
-                    minetest.add_particlespawner({
-                        amount=3, time=0.1,
-                        minpos={x=block.world_pos.x-0.2, y=block.world_pos.y-0.2, z=block.world_pos.z-0.2},
-                        maxpos={x=block.world_pos.x+0.2, y=block.world_pos.y+0.2, z=block.world_pos.z+0.2},
-                        texture="bubble.png",
-                        velocity={x=0,y=1,z=0}, acceleration={x=0,y=-2,z=0}
-                    })
-                end
-                
-                self.last_build_time = now
-                
-                -- Play Build Animation
-                self.object:set_animation({x=190, y=210}, 15, 0)
-                
-                if #self.build_queue == 0 then
-                     self.state = "FINISH_LAYER"
-                     self.timer_finish = 0.5
-                end
-            else
-                 -- Waiting for delay, stand still
-                 if vel.x == 0 and vel.z == 0 and vel.y == 0 then
-                     self.object:set_animation({x=0, y=79}, 30, 0)
-                 end
-            end
-        end
-        
-        -- STATE: FINISH_LAYER
-        if self.state == "FINISH_LAYER" then
-            self.timer_finish = self.timer_finish - dtime
-            if self.timer_finish <= 0 then
-                self.state = "MOVING_UP"
-            end
-            self.object:set_animation({x=0, y=79}, 30, 0)
-        end
-        
-        -- STATE: MOVING_UP
-        if self.state == "MOVING_UP" then
-            local target_y = (self.base_y or pos.y) + 1
-            if pos.y < target_y - 0.5 then
-                vel.y = 5
-                self.object:set_velocity(vel)
-                self.object:set_animation({x=168, y=187}, 30, 1)
-            else
-                pos.y = target_y
-                self.object:set_pos(pos)
-                vel.y = 0
-                self.object:set_velocity(vel)
-                self.base_y = target_y
-                self.state = "IDLE"
-                minetest.chat_send_all("Layer completed!")
-            end
         end
         
         -- Safety reset
@@ -381,7 +414,7 @@ minetest.register_chatcommand("spawn_auto_builder", {
     end
 })
 
-minetest.register_craft_item("auto_we_builder:spawn_egg", {
+minetest.register_craftitem("auto_we_builder:spawn_egg", {
     description = "Auto WE Builder Spawn Egg",
     inventory_image = "auto_we_builder_char.png^[colorize:#ffffffaa",
     on_use = function(itemstack, user, pointed_thing)
