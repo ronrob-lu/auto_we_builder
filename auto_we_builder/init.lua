@@ -576,15 +576,25 @@ function auto_we_builder.parse_we_file(filepath)
     f:close()
     
     -- Execute the Lua code in the .we file safely
-    local func, err = load(content, "schema", "t", {})
+    -- Compatible with both Lua 5.1 (loadstring) and Lua 5.2+ (load)
+    local func, err
+    if loadstring then
+        -- Lua 5.1 (older Minetest)
+        func, err = loadstring(content)
+    else
+        -- Lua 5.2+ (newer Minetest/Luanti)
+        -- load(chunk, chunkname, mode, env)
+        func, err = load(content, "we_schema", "t", _G)
+    end
+    
     if not func then
-        minetest.log("error", "[Auto WE Builder] Failed to load schema: " .. err)
+        minetest.log("error", "[Auto WE Builder] Failed to load schema: " .. tostring(err))
         return nil
     end
     
     local ok, result = pcall(func)
     if not ok then
-        minetest.log("error", "[Auto WE Builder] Failed to execute schema: " .. result)
+        minetest.log("error", "[Auto WE Builder] Failed to execute schema: " .. tostring(result))
         return nil
     end
     
